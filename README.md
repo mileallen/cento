@@ -19,7 +19,7 @@ Open any local folder as a vault. Cento scans it recursively and displays your n
 ### Links
 - `[[Note Title]]` wikilinks navigate between notes in the vault. That means you could bring over your Obsidian vault and start working in it out of the box!
 - **Cento links** — generate a `web+cento://` deep link to any note via the right-click context menu and paste it into any other app. Clicking the link focuses Cento and opens the note directly.
-- Outgoing protocol links: as a bonus (bit of a personal preference)[^1], Zotero links are styled in Zotero's brand color. You can modify that line of code to handle some other app links.
+- Outgoing protocol links: as a bonus (bit of a personal preference)[^*], Zotero links are styled in Zotero's brand color. You can modify that line of code to handle some other app links.
 
 > [!CAUTION]
 > Cento has not been extensively tested for bugs. Before switching an Obsidian vault to it cold turkey, try it for a few days with a backup first.
@@ -55,4 +55,4 @@ Either visit [Cento](https://mileallen.github.io/cento) online or serve the file
 Vanilla JavaScript, [CodeMirror 5](https://codemirror.net/5/), no framework, no build step.
 
 
-[^1]: When visiting older notes, I like to get a sense at a glance of how many instances there are where I link to the web, versus a Zotero citation or another note.
+[^*]: When visiting older notes, I like to get a sense at a glance of how many instances there are where I link to the web, versus a Zotero citation or another note.
