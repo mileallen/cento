@@ -22,8 +22,8 @@ Open any local folder as a vault. Cento scans it recursively and displays your n
 - **Cento links** — generate a `web+cento://` deep link to any note via the right-click context menu and paste it into any other app. Clicking the link focuses Cento and opens the note directly.
 - Outgoing protocol links: as a bonus (bit of a personal preference [^*]), Zotero links are styled in Zotero's brand color. You can modify that line of code to handle some other app links.
 
-- > [!CAUTION]
-> > Cento has not been extensively tested for bugs. Before switching an Obsidian vault to it cold turkey, try it for a few days with a backup first.
+> [!CAUTION]
+> Cento has not been extensively tested for bugs. Before switching an Obsidian vault to it cold turkey, try it for a few days with a backup first.
 
 ### Drawer
 A separate section at the bottom of the sidebar that holds individually opened `.md` files from outside the vault. Each entry can be removed with an inline × button. The Drawer is ephemeral — it is not persisted across sessions.
