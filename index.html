@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8"/>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+        <title>Cento</title>
+        <link rel="stylesheet" href="./looks.css"/>
+        <link rel="stylesheet" href="./local/codemirror.min.css"/>
+        <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png">
+        <link rel="icon" type="image/x-icon" sizes="32x32" href="./favicon.ico">
+        <script src="./local/codemirror.min.js"></script>
+        <script src="./local/markdown.min.js"></script>
+        <link rel="manifest" href="./manifest.json"/>
+        <!-- SVG Sprite -->
+        <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
+            <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="9 18 15 12 9 6"/>
+            </symbol>
+            <symbol id="icon-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"/>
+            </symbol>
+            <symbol id="icon-folder-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </symbol>
+            <symbol id="icon-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"/>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </symbol>
+            <symbol id="icon-file-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="12" y1="18" x2="12" y2="12"/>
+                <line x1="9" y1="15" x2="15" y2="15"/>
+            </symbol>
+            <symbol id="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+            </symbol>
+            <symbol id="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </symbol>
+            <symbol id="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+            </symbol>
+            <symbol id="icon-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </symbol>
+            <symbol id="icon-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+            </symbol>
+            <symbol id="icon-save" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                <polyline points="17 21 17 13 7 13 7 21"/>
+                <polyline points="7 3 7 8 15 8"/>
+            </symbol>
+        </svg>
+
+    </head>
+    <body>
+        <div id="toolbar">
+            <span class="app-name">
+                Cen<span>to</span>
+            </span>
+            <button class="icon-btn" id="btn-open-vault" data-tip="Open Vault">
+                <svg>
+                    <use href="#icon-folder-open"/>
+                </svg>
+            </button>
+            <div id="vault-name" style="display:none"></div>
+            <div class="toolbar-sep"></div>
+            <button class="icon-btn" id="btn-new-file" data-tip="New File" disabled>
+                <svg>
+                    <use href="#icon-file-plus"/>
+                </svg>
+            </button>
+            <div class="toolbar-sep"></div>
+            <button class="icon-btn active" id="btn-sidebar-tree" data-tip="File Tree">
+                <svg>
+                    <use href="#icon-folder"/>
+                </svg>
+            </button>
+            <button class="icon-btn" id="btn-sidebar-search" data-tip="Search">
+                <svg>
+                    <use href="#icon-search"/>
+                </svg>
+            </button>
+            <div class="toolbar-right">
+                <span id="save-indicator"></span>
+                <button class="icon-btn" id="btn-toggle-preview" data-tip="Preview Mode" style="display:none">
+                    <svg class="svg-eye">
+                        <use href="#icon-eye"/>
+                    </svg>
+                    <svg class="svg-edit" style="display:none">
+                        <use href="#icon-edit"/>
+                    </svg>
+                </button>
+                <button class="icon-btn" id="btn-save" data-tip="Save (Ctrl+S)" style="display:none">
+                    <svg>
+                        <use href="#icon-save"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div id="layout">
+            <div id="sidebar">
+                <!-- File Tree panel -->
+                <div id="panel-tree" class="sidebar-panel">
+                    <div class="sidebar-header">
+                        <span class="sidebar-header-title" id="sidebar-vault-name">No Vault</span>
+                    </div>
+                    <div class="file-tree">
+                        <div id="no-vault-msg" class="sidebar-empty">Open a vault folder to get started.</div>
+                        <div id="file-tree-root"></div>
+                    </div>
+                    <div id="drawer-section" style="display:none">
+                        <div class="drawer-section-header">Drawer</div>
+                        <div id="drawer-list"></div>
+                    </div>
+                </div>
+                <!-- Search panel -->
+                <div id="panel-search" class="sidebar-panel" style="display:none">
+                    <div class="sidebar-header">
+                        <span class="sidebar-header-title">Search</span>
+                    </div>
+                    <div class="search-input-wrap">
+                        <input id="search-input" type="text" placeholder="Search notes…"/>
+                        <button class="search-btn" id="btn-search-go">Go</button>
+                    </div>
+                    <div class="search-results">
+                        <div id="search-empty" class="search-empty" style="display:none">No results found.</div>
+                        <div id="search-results-list"></div>
+                    </div>
+                </div>
+            </div>
+            <div id="main">
+                <div id="tabs-bar" style="display:none"></div>
+                <div id="editor-area">
+                    <div id="welcome">
+                        <h2>Welcome to Cento</h2>
+                        <p>Open a vault folder to work with markdown notes.</p>
+                        <div class="btn-row">
+                            <button class="open-btn" id="btn-reopen-vault" style="display:none">Reopen</button>
+                            <button class="open-btn" id="btn-open-vault-welcome">Open Vault</button>
+                        </div>
+                        <h3>&copy; S Wry MMXXVI</h3>
+                    </div>
+                    <div id="panes-container" style="position:absolute;inset:0;pointer-events:none;"></div>
+                </div>
+            </div>
+        </div>
+        <div id="toast"></div>
+        <div id="context-menu">
+            <div class="ctx-item" id="ctx-rename">Rename</div>
+            <div class="ctx-item danger" id="ctx-delete">Delete</div>
+        </div>
+        <dialog id="confirm-dialog">
+            <p id="confirm-message"></p>
+            <div class="confirm-buttons">
+                <button id="confirm-ok">OK</button>
+                <button id="confirm-cancel">Cancel</button>
+            </div>
+        </dialog>
+        <script src="app.js"></script>
+        <script>
+            if ('serviceWorker'in navigator) {
+                navigator.serviceWorker.register('./sw.js');
+            }
+        </script>
+    </body>
+</html>
