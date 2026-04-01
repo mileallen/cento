@@ -765,19 +765,19 @@ body {
 
 .cm-md-link {
     color: var(--accent) !important;
-    text-decoration: underline;
+    text-decoration: none !important;
     cursor: pointer;
 }
 
 .cm-md-wikilink {
     color: var(--green) !important;
-    text-decoration: underline;
+    text-decoration: none !important;
     cursor: pointer;
 }
 
 .cm-md-zotero-link {
     color: var(--zotRed) !important;
-    text-decoration: underline;
+    text-decoration: none !important;
     cursor: pointer;
 }
 
@@ -860,6 +860,7 @@ body {
 
 .preview-content a {
     color: var(--accent);
+    text-decoration: none;
 }
 
 .preview-content a[href^="zotero"] {
