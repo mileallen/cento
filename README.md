@@ -2,7 +2,7 @@
 
 Cento is a minimal, offline-first markdown notes app that runs in the browser as a PWA. It covers the basic everyday features of Obsidian in a far lighter package — no Electron, no plugins, no account — while adding one capability Obsidian lacks: the ability to open isolated markdown files from anywhere on your local filesystem into a dedicated **Drawer** section, independently of whatever vault you have open. Once installed as a PWA (recommended via Microsoft Edge or Google Chrome), Cento registers itself as a handler for `.md` files in Windows Explorer, so double-clicking any markdown file opens it directly in the Drawer without disturbing your vault session.
 
-
+<img src="/images/screenshot-2026-04-01.png" width="100%">
 ---
 
 ## Features
