@@ -55,4 +55,4 @@ Either visit [Cento](https://mileallen.github.io/cento) online or serve the file
 Vanilla JavaScript, [CodeMirror 5](https://codemirror.net/5/), no framework, no build step.
 
 
-[^1] : When visiting older notes, I like to get a sense at a glance of how many instances there are where I link to the web, versus a Zotero citation or another note.
+[^1]: When visiting older notes, I like to get a sense at a glance of how many instances there are where I link to the web, versus a Zotero citation or another note.
