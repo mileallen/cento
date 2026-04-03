@@ -56,6 +56,14 @@
                 <polyline points="17 21 17 13 7 13 7 21"/>
                 <polyline points="7 3 7 8 15 8"/>
             </symbol>
+            <symbol id="icon-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6"/>
+                <line x1="8" y1="12" x2="21" y2="12"/>
+                <line x1="8" y1="18" x2="21" y2="18"/>
+                <line x1="3" y1="6" x2="3.01" y2="6"/>
+                <line x1="3" y1="12" x2="3.01" y2="12"/>
+                <line x1="3" y1="18" x2="3.01" y2="18"/>
+            </symbol>
         </svg>
 
     </head>
@@ -102,6 +110,11 @@
                         <use href="#icon-save"/>
                     </svg>
                 </button>
+                <button class="icon-btn" id="btn-toggle-outline" data-tip="Outline" style="display:none">
+                    <svg>
+                        <use href="#icon-list"/>
+                    </svg>
+                </button>
             </div>
         </div>
         <div id="layout">
@@ -135,6 +148,7 @@
                     </div>
                 </div>
             </div>
+            <div id="resize-left" class="sidebar-resize-handle"></div>
             <div id="main">
                 <div id="tabs-bar" style="display:none"></div>
                 <div id="editor-area">
@@ -148,6 +162,17 @@
                         <h3>&copy; S Wry MMXXVI</h3>
                     </div>
                     <div id="panes-container" style="position:absolute;inset:0;pointer-events:none;"></div>
+                </div>
+            </div>
+            <div id="resize-right" class="sidebar-resize-handle" style="display:none"></div>
+            <div id="right-sidebar" style="display:none">
+                <div id="panel-outline" class="sidebar-panel">
+                    <div class="sidebar-header">
+                        <span class="sidebar-header-title">Outline</span>
+                    </div>
+                    <div id="outline-list" class="outline-list">
+                        <div class="outline-empty">Open a note to see its outline.</div>
+                    </div>
                 </div>
             </div>
         </div>

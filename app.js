@@ -415,12 +415,16 @@ const App = {
     searchResults: [],
     searchRan: false,
     saveStatus: '',
+    outlineVisible: false,
+    sidebarWidth: 260,
+    rightSidebarWidth: 220,
 
     // ── Internals ──
     _editors: {},
     _saveTimers: {},
     _sessionTimer: null,
     _decoTimer: null,
+    _outlineTimer: null,
     _openingPaths: new Set(),
     _renameCommitted: false,
     // Unified context-menu state
@@ -444,8 +448,13 @@ const App = {
         }
         );
         document.getElementById('btn-toggle-preview').addEventListener('click', () => this.toggleEditorMode());
+        document.getElementById('btn-toggle-outline').addEventListener('click', () => this.toggleOutline());
         document.getElementById('btn-save').addEventListener('click', () => this.saveActiveNote());
         document.getElementById('btn-search-go').addEventListener('click', () => this.runSearch());
+
+        this._initResizeDrag(document.getElementById('resize-left'), 'left');
+        this._initResizeDrag(document.getElementById('resize-right'), 'right');
+        this._applySidebarWidths();
 
         const searchInput = document.getElementById('search-input');
         searchInput.addEventListener('keydown', e => {
@@ -908,8 +917,10 @@ const App = {
         const hasActive = !!this.activeTabId;
         const btnPreview = document.getElementById('btn-toggle-preview');
         const btnSave = document.getElementById('btn-save');
+        const btnOutline = document.getElementById('btn-toggle-outline');
         btnPreview.style.display = hasActive ? '' : 'none';
         btnSave.style.display = hasActive ? '' : 'none';
+        btnOutline.style.display = hasActive ? '' : 'none';
 
         if (hasActive) {
             const isPreview = this.editorMode === 'preview';
@@ -917,6 +928,7 @@ const App = {
             btnPreview.dataset.tip = isPreview ? 'Live Preview' : 'Preview Mode';
             btnPreview.querySelector('.svg-eye').style.display = isPreview ? 'none' : '';
             btnPreview.querySelector('.svg-edit').style.display = isPreview ? '' : 'none';
+            btnOutline.classList.toggle('active', this.outlineVisible);
         }
     },
 
@@ -1010,6 +1022,9 @@ const App = {
             sidebarView: this.sidebarView,
             activeFolderPath: this.activeFolderPath,
             expandedFolders: [...this.expandedFolders],
+            sidebarWidth: this.sidebarWidth,
+            rightSidebarWidth: this.rightSidebarWidth,
+            outlineVisible: this.outlineVisible,
             tabs: this.tabs.map(t => ({
                 id: t.id,
                 title: t.title,
@@ -1051,6 +1066,10 @@ const App = {
             this.sidebarView = s.sidebarView || 'tree';
             this.activeFolderPath = s.activeFolderPath || '';
             this.expandedFolders = new Set(s.expandedFolders || []);
+            if (s.sidebarWidth)      this.sidebarWidth      = s.sidebarWidth;
+            if (s.rightSidebarWidth) this.rightSidebarWidth  = s.rightSidebarWidth;
+            this.outlineVisible = s.outlineVisible || false;
+            this._applySidebarWidths();
             this._renderSidebar();
 
             if (s.tabs?.length) {
@@ -1168,6 +1187,7 @@ const App = {
 
         this._renderTabsBar();
         this.renderFileTree();
+        if (this.outlineVisible) this._renderOutline();
         this.scheduleSessionSave();
     },
 
@@ -1276,6 +1296,10 @@ const App = {
                 tab.dirty = true;
                 this._renderTabsBar();
                 this.scheduleAutoSave(tabId);
+            }
+            if (this.outlineVisible) {
+                clearTimeout(this._outlineTimer);
+                this._outlineTimer = setTimeout(() => this._renderOutline(), 300);
             }
         }
         );
@@ -1697,6 +1721,92 @@ const App = {
         el.textContent = msg;
         el.classList.add('show');
         setTimeout( () => el.classList.remove('show'), duration);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Outline
+    // ─────────────────────────────────────────────────────────────────────────
+    _parseHeadings(content) {
+        const headings = [];
+        const lines = content.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+            const m = lines[i].match(/^(#{1,6}) (.*)/);
+            if (m) headings.push({ level: m[1].length, text: m[2].trim(), line: i });
+        }
+        return headings;
+    },
+
+    _renderOutline() {
+        const list = document.getElementById('outline-list');
+        if (!list) return;
+        list.innerHTML = '';
+        const cm = this._editors[this.activeTabId];
+        if (!cm) {
+            list.innerHTML = '<div class="outline-empty">No note open.</div>';
+            return;
+        }
+        const headings = this._parseHeadings(cm.getValue());
+        if (!headings.length) {
+            list.innerHTML = '<div class="outline-empty">No headings found.</div>';
+            return;
+        }
+        for (const h of headings) {
+            const item = document.createElement('div');
+            item.className = `outline-item ol-h${h.level}`;
+            item.textContent = h.text;
+            item.title = h.text;
+            item.addEventListener('click', () => {
+                cm.setCursor({ line: h.line, ch: 0 });
+                cm.scrollIntoView({ line: h.line, ch: 0 }, 100);
+                if (this.editorMode === 'live') cm.focus();
+            });
+            list.appendChild(item);
+        }
+    },
+
+    toggleOutline() {
+        this.outlineVisible = !this.outlineVisible;
+        this._applySidebarWidths();
+        if (this.outlineVisible) this._renderOutline();
+        this._renderTabsBar();
+        this.scheduleSessionSave();
+    },
+
+    _applySidebarWidths() {
+        const ls = document.getElementById('sidebar');
+        const rs = document.getElementById('right-sidebar');
+        const rh = document.getElementById('resize-right');
+        if (ls) ls.style.width = this.sidebarWidth + 'px';
+        if (rs) {
+            rs.style.display = this.outlineVisible ? '' : 'none';
+            if (this.outlineVisible) rs.style.width = this.rightSidebarWidth + 'px';
+        }
+        if (rh) rh.style.display = this.outlineVisible ? '' : 'none';
+    },
+
+    _initResizeDrag(handleEl, side) {
+        if (!handleEl) return;
+        handleEl.addEventListener('mousedown', e => {
+            e.preventDefault();
+            handleEl.classList.add('dragging');
+            const startX = e.clientX;
+            const startW = side === 'left' ? this.sidebarWidth : this.rightSidebarWidth;
+            const onMove = e => {
+                const delta = side === 'left' ? e.clientX - startX : startX - e.clientX;
+                const newW = Math.min(480, Math.max(160, startW + delta));
+                if (side === 'left') this.sidebarWidth = newW;
+                else this.rightSidebarWidth = newW;
+                this._applySidebarWidths();
+            };
+            const onUp = () => {
+                handleEl.classList.remove('dragging');
+                document.removeEventListener('mousemove', onMove);
+                document.removeEventListener('mouseup', onUp);
+                this.scheduleSessionSave();
+            };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
     },
 };
 
