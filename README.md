@@ -57,5 +57,9 @@ Either visit [Cento](https://mileallen.github.io/cento) online or serve the file
 
 Vanilla JavaScript, [CodeMirror 5](https://codemirror.net/5/), no framework, no build step.
 
+## Credits
+
+Cento was built with generous help from Claude Sonnet 4.6 and Gemini 3.x. Each was recruited to fix parts of the code where the other went off track. Sach’s contribution was primarily combining their work, testing and reporting bugs and researching alternatives to the LLM’s first instinct and fact checking (e.g. whether a library is outdated or how widely an API is supported).
+
 
 [^*]: When visiting older notes, I like to get a sense at a glance of how many instances there are where I link to the web, versus a Zotero citation or another note.
