@@ -79,9 +79,9 @@
     --surface2: #2c2d33;
     --border: #2e2f35;
     --border-light: #3a3b42;
-    --text: #c9cad4b0; /* c9cad4 - added 'b0' to alpha channel */
-    --text-dim: #6b6d7ab0; /* 6b6d7a */
-    --text-bright: #e8e9f0b0; /* e8e9f0 */
+    --text: #c9cad4;
+    --text-dim: #6b6d7a;
+    --text-bright: #e8e9f0;
     --accent: #5b8af0;
     --accent-dim: #3d5fa8;
     --accent-glow: rgba(91,138,240,0.15);
@@ -701,12 +701,33 @@ body {
     position: absolute;
     inset: 0;
     display: none;
-    flex-direction: column;
+    flex-direction: row;
     pointer-events: auto;
 }
 
 .editor-pane.active {
     display: flex;
+}
+
+/* Column panes inside editor-pane */
+.col-pane {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    min-width: 0;
+    height: 100%;
+}
+
+.col-divider {
+    width: 1px;
+    flex-shrink: 0;
+    background: linear-gradient(
+        to bottom,
+        transparent 10%,
+        var(--border-light) 10%,
+        var(--border-light) 90%,
+        transparent 90%
+    );
 }
 
 #welcome {
@@ -795,6 +816,11 @@ body {
 }
 
 /* Live preview decoration classes */
+.cm-spell-error {
+    text-decoration: underline wavy #e06c75;
+    text-decoration-skip-ink: none;
+    text-underline-offset: 2px;
+}
 .cm-md-hidden {
     opacity: 0 !important;
     font-size: 1px !important;
@@ -919,7 +945,15 @@ body {
 }
 
 .preview-only-pane.active {
-    display: block;
+    display: flex;
+    flex-direction: row;
+}
+
+.preview-col-pane {
+    flex: 1;
+    overflow-y: auto;
+    min-width: 0;
+    height: 100%;
 }
 
 .preview-content {

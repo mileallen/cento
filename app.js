@@ -421,11 +421,14 @@ const App = {
 
     // ── Internals ──
     _editors: {},
+    _focusedColIndex: {},
     _saveTimers: {},
     _sessionTimer: null,
     _decoTimer: null,
     _outlineTimer: null,
     _openingPaths: new Set(),
+    _typo: null,
+    _dictReady: false,
     _renameCommitted: false,
     // Unified context-menu state
     _ctxNode: null,
@@ -448,6 +451,7 @@ const App = {
         }
         );
         document.getElementById('btn-toggle-preview').addEventListener('click', () => this.toggleEditorMode());
+        document.getElementById('btn-add-column').addEventListener('click', () => this.addColumn());
         document.getElementById('btn-toggle-outline').addEventListener('click', () => this.toggleOutline());
         document.getElementById('btn-save').addEventListener('click', () => this.saveActiveNote());
         document.getElementById('btn-search-go').addEventListener('click', () => this.runSearch());
@@ -482,7 +486,7 @@ const App = {
                 return;
             e.preventDefault();
             const isWiki = el.classList.contains('cm-md-wikilink');
-            const cm = this._editors[this.activeTabId];
+            const cm = this._getActiveCm(this.activeTabId);
             if (!cm)
                 return;
             const pos = cm.coordsChar({
@@ -581,6 +585,7 @@ const App = {
         this._renderToolbar();
         this._renderTabsBar();
         this._renderSidebar();
+        this._loadDictionary();
 
         // File Handling API — receive .md files launched from Explorer / Finder.
         // The browser buffers launch params until a consumer is registered, so
@@ -664,7 +669,7 @@ const App = {
             if (isPreview) {
                 hasSel = (window.getSelection()?.toString().length ?? 0) > 0;
             } else {
-                const cm = this._editors[this.activeTabId];
+                const cm = this._getActiveCm(this.activeTabId);
                 hasSel = cm ? cm.getSelection().length > 0 : false;
             }
 
@@ -785,7 +790,7 @@ const App = {
         }
 
         // Live-preview mode — operate on CodeMirror
-        const cm = this._editors[this.activeTabId];
+        const cm = this._getActiveCm(this.activeTabId);
         if (!cm)
             return;
 
@@ -918,9 +923,11 @@ const App = {
         const btnPreview = document.getElementById('btn-toggle-preview');
         const btnSave = document.getElementById('btn-save');
         const btnOutline = document.getElementById('btn-toggle-outline');
+        const btnAddCol = document.getElementById('btn-add-column');
         btnPreview.style.display = hasActive ? '' : 'none';
         btnSave.style.display = hasActive ? '' : 'none';
         btnOutline.style.display = hasActive ? '' : 'none';
+        btnAddCol.style.display = hasActive ? '' : 'none';
 
         if (hasActive) {
             const isPreview = this.editorMode === 'preview';
@@ -929,6 +936,9 @@ const App = {
             btnPreview.querySelector('.svg-eye').style.display = isPreview ? 'none' : '';
             btnPreview.querySelector('.svg-edit').style.display = isPreview ? '' : 'none';
             btnOutline.classList.toggle('active', this.outlineVisible);
+            const colCount = (this._editors[this.activeTabId] || []).length;
+            btnAddCol.disabled = colCount >= 4;
+            btnAddCol.dataset.tip = colCount >= 4 ? 'Max 4 columns' : `Add Column (${colCount} of 4)`;
         }
     },
 
@@ -1025,23 +1035,20 @@ const App = {
             sidebarWidth: this.sidebarWidth,
             rightSidebarWidth: this.rightSidebarWidth,
             outlineVisible: this.outlineVisible,
-            tabs: this.tabs.map(t => ({
-                id: t.id,
-                title: t.title,
-                path: t.path,
-                scrollTop: this._editors[t.id]?.getScrollInfo().top ?? t.scrollTop ?? 0,
-                cursorPos: this._editors[t.id] ? ( () => {
-                    const c = this._editors[t.id].getCursor();
-                    return {
-                        line: c.line,
-                        ch: c.ch
-                    };
-                }
-                )() : (t.cursorPos || {
-                    line: 0,
-                    ch: 0
-                }),
-            })),
+            tabs: this.tabs.map(t => {
+                const cms = this._editors[t.id] || [];
+                return {
+                    id: t.id,
+                    title: t.title,
+                    path: t.path,
+                    columns: cms.length
+                        ? cms.map(cm => {
+                            const c = cm.getCursor();
+                            return { scrollTop: cm.getScrollInfo().top, cursorPos: { line: c.line, ch: c.ch } };
+                          })
+                        : (t.columns || [{ scrollTop: 0, cursorPos: { line: 0, ch: 0 } }]),
+                };
+            }),
         };
         try {
             const fh = await this.vaultHandle.getFileHandle(SESSION_FILE, {
@@ -1075,8 +1082,12 @@ const App = {
             if (s.tabs?.length) {
                 for (const t of s.tabs) {
                     const node = findNode(this.fileTree, t.path);
-                    if (node?.type === 'file')
-                        await this.openFile(node.handle, node.path, node.title, t.cursorPos, t.scrollTop, t.id);
+                    if (node?.type === 'file') {
+                        // Support old session format (scrollTop/cursorPos) and new (columns)
+                        const columnsData = t.columns
+                            || [{ scrollTop: t.scrollTop || 0, cursorPos: t.cursorPos || { line: 0, ch: 0 } }];
+                        await this.openFile(node.handle, node.path, node.title, columnsData, t.id);
+                    }
                 }
                 if (s.activeTabId)
                     this.activateTab(s.activeTabId);
@@ -1089,10 +1100,7 @@ const App = {
     // ─────────────────────────────────────────────────────────────────────────
     // Files / tabs
     // ─────────────────────────────────────────────────────────────────────────
-    async openFile(fileHandle, path, title, cursorPos={
-        line: 0,
-        ch: 0
-    }, scrollTop=0, tabId=null) {
+    async openFile(fileHandle, path, title, columnsData=[{scrollTop:0, cursorPos:{line:0,ch:0}}], tabId=null) {
         const existing = this.tabs.find(t => t.path === path);
         if (existing) {
             this.activateTab(existing.id);
@@ -1112,14 +1120,13 @@ const App = {
                 path,
                 handle: fileHandle,
                 dirty: false,
-                scrollTop,
-                cursorPos
+                columns: columnsData,
             });
             this.activeTabId = id;
             this._renderTabsBar();
 
             await new Promise(r => setTimeout(r, 0));
-            this.mountEditor(id, content, cursorPos, scrollTop);
+            this.mountEditor(id, content, columnsData);
             this.renderFileTree();
             this.scheduleSessionSave();
         } finally {
@@ -1128,42 +1135,28 @@ const App = {
     },
 
     activateTab(id) {
-        const prevCm = this._editors[this.activeTabId];
-        if (prevCm) {
+        // Save scroll/cursor for all columns of the outgoing tab
+        const prevCms = this._editors[this.activeTabId];
+        if (prevCms && prevCms.length) {
             const prevTab = this.tabs.find(t => t.id === this.activeTabId);
-            if (prevTab)
-                prevTab.scrollTop = prevCm.getScrollInfo().top;
+            if (prevTab) {
+                prevTab.columns = prevCms.map(cm => {
+                    const c = cm.getCursor();
+                    return { scrollTop: cm.getScrollInfo().top, cursorPos: { line: c.line, ch: c.ch } };
+                });
+            }
         }
 
         this.activeTabId = id;
 
         document.querySelectorAll('.editor-pane, .preview-only-pane').forEach(p => {
             p.classList.remove('active');
-        }
-        );
+        });
 
         if (this.editorMode === 'preview') {
             let preview = document.querySelector(`.preview-only-pane[data-tab-id="${id}"]`);
             if (!preview) {
-                const cm = this._editors[id];
-                preview = document.createElement('div');
-                preview.className = 'preview-only-pane';
-                preview.dataset.tabId = id;
-                preview.innerHTML = `<div class="preview-content">${mdToHtml(cm.getValue())}</div>`;
-                preview.addEventListener('click', e => {
-                    const a = e.target.closest('a');
-                    if (!a)
-                        return;
-                    e.preventDefault();
-                    if (a.classList.contains('wikilink'))
-                        this.handleLinkClick({
-                            href: a.dataset.target,
-                            isWiki: true
-                        });
-                    else
-                        window.open(a.href, '_blank');
-                }
-                );
+                preview = this._buildPreviewPane(id);
                 document.getElementById('panes-container').appendChild(preview);
             }
             preview.classList.add('active');
@@ -1171,18 +1164,18 @@ const App = {
             document.querySelector(`.editor-pane[data-tab-id="${id}"]`)?.classList.add('active');
         }
 
-        const cm = this._editors[id];
-        if (cm) {
-            requestAnimationFrame( () => {
+        const cms = this._editors[id];
+        if (cms && cms.length) {
+            requestAnimationFrame(() => {
                 const tab = this.tabs.find(t => t.id === id);
-                if (tab)
-                    cm.scrollTo(null, tab.scrollTop || 0);
-                cm.refresh();
-                cm.focus();
-                if (this.editorMode === 'live')
-                    rebuildDecorations(cm);
-            }
-            );
+                cms.forEach((cm, i) => {
+                    const colData = tab?.columns?.[i];
+                    if (colData) cm.scrollTo(null, colData.scrollTop || 0);
+                    cm.refresh();
+                    if (this.editorMode === 'live') rebuildDecorations(cm);
+                });
+                (cms[this._focusedColIndex[id] || 0] || cms[0]).focus();
+            });
         }
 
         this._renderTabsBar();
@@ -1199,10 +1192,12 @@ const App = {
             return;
 
         if (this._editors[id]) {
-            this._editors[id].toTextArea();
+            this._editors[id].forEach(cm => cm.toTextArea());
             delete this._editors[id];
+            delete this._focusedColIndex[id];
         }
-        document.querySelector(`[data-tab-id="${id}"]`)?.remove();
+        document.querySelector(`.editor-pane[data-tab-id="${id}"]`)?.remove();
+        document.querySelector(`.preview-only-pane[data-tab-id="${id}"]`)?.remove();
 
         const idx = this.tabs.findIndex(t => t.id === id);
         this.tabs.splice(idx, 1);
@@ -1228,34 +1223,56 @@ const App = {
     // ─────────────────────────────────────────────────────────────────────────
     // Mount CodeMirror
     // ─────────────────────────────────────────────────────────────────────────
-    mountEditor(tabId, content, cursorPos={
-        line: 0,
-        ch: 0
-    }, scrollTop=0) {
+    mountEditor(tabId, fullContent, columnsData=[{scrollTop:0, cursorPos:{line:0,ch:0}}]) {
         const container = document.getElementById('panes-container');
 
+        // Create the outer pane for this tab (one per tab, contains all col-panes)
         const pane = document.createElement('div');
         pane.className = 'editor-pane active';
         pane.dataset.tabId = tabId;
         container.appendChild(pane);
 
+        // Deactivate all other panes
         container.querySelectorAll('.editor-pane, .preview-only-pane').forEach(p => {
-            if (p !== pane)
-                p.classList.remove('active');
-        }
-        );
+            if (p !== pane) p.classList.remove('active');
+        });
 
+        // Split content on <!column> delimiter (flexible whitespace)
+        const COLUMN_DELIM = /\n?<!column>\n?/g;
+        const sections = fullContent.split(COLUMN_DELIM);
+
+        this._editors[tabId] = [];
+        this._focusedColIndex[tabId] = 0;
+
+        sections.forEach((sectionContent, i) => {
+            // Divider before every column after the first
+            if (i > 0) {
+                const divider = document.createElement('div');
+                divider.className = 'col-divider';
+                pane.appendChild(divider);
+            }
+
+            const colPane = document.createElement('div');
+            colPane.className = 'col-pane';
+            pane.appendChild(colPane);
+
+            const colData = columnsData[i] || { scrollTop: 0, cursorPos: { line: 0, ch: 0 } };
+            this._mountColumnEditor(tabId, colPane, sectionContent, i, colData);
+        });
+    },
+
+    _mountColumnEditor(tabId, colPane, content, colIndex, colData={scrollTop:0, cursorPos:{line:0,ch:0}}) {
         const ta = document.createElement('textarea');
-        pane.appendChild(ta);
+        colPane.appendChild(ta);
 
         const cm = CodeMirror.fromTextArea(ta, {
             mode: 'markdown',
             lineWrapping: true,
-            autofocus: true,
+            autofocus: colIndex === 0,
             styleActiveLine: true,
             extraKeys: {
                 'Ctrl-S': () => this.saveActiveNote(),
-                'Cmd-S': () => this.saveActiveNote(),
+                'Cmd-S':  () => this.saveActiveNote(),
                 'Ctrl-K': () => {
                     const sel = cm.getSelection();
                     if (!sel) return;
@@ -1263,31 +1280,42 @@ const App = {
                     cm.replaceSelection(replacement);
                     const cur = cm.getCursor();
                     cm.setCursor({ line: cur.line, ch: cur.ch - 1 });
-                    },
+                },
                 'Ctrl-V': () => {
                     navigator.clipboard.readText().then(text => {
-                        if (text)
-                            cm.replaceSelection(text);
-                    }).catch( () => {/* permissions denied — silent */});
-                    },
+                        if (text) cm.replaceSelection(text);
+                    }).catch(() => {});
+                },
+                'Enter': () => {
+                    const lineText = cm.getLine(cm.getCursor().line) || '';
+                    if (lineText.trim() === '<!column>') {
+                        this._splitColumnAtDelimiter(tabId, cm);
+                    } else {
+                        return CodeMirror.Pass;
+                    }
+                },
             },
         });
 
         cm.setValue(content);
-        cm.setCursor(cursorPos);
+        cm.setCursor(colData.cursorPos || { line: 0, ch: 0 });
         cm.setSize('100%', '100%');
-        this._editors[tabId] = cm;
 
-        if (this.editorMode === 'live')
-            rebuildDecorations(cm);
+        if (this._dictReady) cm.addOverlay(this._spellOverlay());
+        if (this.editorMode === 'live') rebuildDecorations(cm);
+
+        // Use indexOf so focus tracking is correct even after mid-array splices
+        cm.on('focus', () => {
+            const cms = this._editors[tabId];
+            if (cms) this._focusedColIndex[tabId] = cms.indexOf(cm);
+        });
 
         const onCursorOrChange = () => {
-            if (this.editorMode !== 'live')
-                return;
+            if (this.editorMode !== 'live') return;
             clearTimeout(this._decoTimer);
-            this._decoTimer = setTimeout( () => rebuildDecorations(cm), 50);
-        }
-        ;
+            this._decoTimer = setTimeout(() => rebuildDecorations(cm), 50);
+        };
+
         cm.on('cursorActivity', onCursorOrChange);
         cm.on('change', (_, change) => {
             onCursorOrChange();
@@ -1301,14 +1329,14 @@ const App = {
                 clearTimeout(this._outlineTimer);
                 this._outlineTimer = setTimeout(() => this._renderOutline(), 300);
             }
-        }
-        );
+        });
 
-        requestAnimationFrame( () => {
-            cm.scrollTo(null, scrollTop);
+        this._editors[tabId].push(cm);
+
+        requestAnimationFrame(() => {
+            cm.scrollTo(null, colData.scrollTop || 0);
             cm.refresh();
-        }
-        );
+        });
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1319,50 +1347,33 @@ const App = {
 
         if (this.editorMode === 'preview') {
             const tabId = this.activeTabId;
-            const cm = this._editors[tabId];
-            if (!cm)
-                return;
+            const cms = this._editors[tabId];
+            if (!cms || !cms.length) return;
             const tab = this.tabs.find(t => t.id === tabId);
-            if (tab)
-                tab.scrollTop = cm.getScrollInfo().top;
+            if (tab) {
+                tab.columns = cms.map(cm => {
+                    const c = cm.getCursor();
+                    return { scrollTop: cm.getScrollInfo().top, cursorPos: { line: c.line, ch: c.ch } };
+                });
+            }
 
             document.querySelector(`.editor-pane[data-tab-id="${tabId}"]`)?.classList.remove('active');
             document.querySelector(`.preview-only-pane[data-tab-id="${tabId}"]`)?.remove();
 
-            const preview = document.createElement('div');
-            preview.className = 'preview-only-pane active';
-            preview.dataset.tabId = tabId;
-            preview.innerHTML = `<div class="preview-content">${mdToHtml(cm.getValue())}</div>`;
-            preview.addEventListener('click', e => {
-                const a = e.target.closest('a');
-                if (!a)
-                    return;
-                e.preventDefault();
-                if (a.classList.contains('wikilink'))
-                    this.handleLinkClick({
-                        href: a.dataset.target,
-                        isWiki: true
-                    });
-                else
-                    window.open(a.href, '_blank');
-            }
-            );
+            const preview = this._buildPreviewPane(tabId);
+            preview.classList.add('active');
             document.getElementById('panes-container').appendChild(preview);
-            if (tab)
-                preview.scrollTop = tab.scrollTop || 0;
 
         } else {
             document.querySelectorAll('.preview-only-pane').forEach(p => p.remove());
             const tabId = this.activeTabId;
             document.querySelector(`.editor-pane[data-tab-id="${tabId}"]`)?.classList.add('active');
-            const cm = this._editors[tabId];
-            if (cm) {
-                requestAnimationFrame( () => {
-                    cm.refresh();
-                    cm.focus();
-                    rebuildDecorations(cm);
-                }
-                );
+            const cms = this._editors[tabId];
+            if (cms && cms.length) {
+                requestAnimationFrame(() => {
+                    cms.forEach(cm => { cm.refresh(); rebuildDecorations(cm); });
+                    (cms[this._focusedColIndex[tabId] || 0] || cms[0]).focus();
+                });
             }
         }
 
@@ -1385,14 +1396,14 @@ const App = {
 
     async saveTab(tabId) {
         const tab = this.tabs.find(t => t.id === tabId);
-        const cm = this._editors[tabId];
-        if (!tab || !cm)
+        const cms = this._editors[tabId];
+        if (!tab || !cms || !cms.length)
             return;
 
         this.saveStatus = 'saving';
         this._renderSaveStatus();
         try {
-            await writeFile(tab.handle, cm.getValue());
+            await writeFile(tab.handle, this._getTabContent(tabId));
             tab.dirty = false;
             this.saveStatus = 'saved';
             this._renderSaveStatus();
@@ -1724,6 +1735,212 @@ const App = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Column helpers
+    // ─────────────────────────────────────────────────────────────────────────
+    _splitColumnAtDelimiter(tabId, cm) {
+        const cms = this._editors[tabId];
+        if (!cms) return;
+
+        if (cms.length >= 4) {
+            // At max columns — remove the delimiter line the user typed and warn
+            const lineNo = cm.getCursor().line;
+            cm.operation(() => {
+                const lineCount = cm.lineCount();
+                const from = { line: lineNo, ch: 0 };
+                const to = lineNo < lineCount - 1
+                    ? { line: lineNo + 1, ch: 0 }
+                    : { line: lineNo, ch: cm.getLine(lineNo).length };
+                cm.replaceRange('', from, to);
+            });
+            this.toast('Maximum of 4 columns reached.');
+            return;
+        }
+
+        const cursorLine = cm.getCursor().line;
+        const lineCount = cm.lineCount();
+
+        // Content above the delimiter stays in this CM
+        const beforeLines = [];
+        for (let i = 0; i < cursorLine; i++) beforeLines.push(cm.getLine(i));
+        const before = beforeLines.join('\n');
+
+        // Content below the delimiter goes into the new CM
+        const afterLines = [];
+        for (let i = cursorLine + 1; i < lineCount; i++) afterLines.push(cm.getLine(i));
+        const after = afterLines.join('\n');
+
+        // Update current CM content (suppress dirty/autosave — we handle save ourselves)
+        cm.setValue(before);
+
+        // Insert new divider + col-pane after the current col-pane in the DOM
+        const currentColPane = cm.getWrapperElement().closest('.col-pane');
+        const editorPane = currentColPane?.parentElement;
+        if (!currentColPane || !editorPane) return;
+
+        const divider = document.createElement('div');
+        divider.className = 'col-divider';
+        currentColPane.insertAdjacentElement('afterend', divider);
+
+        const newColPane = document.createElement('div');
+        newColPane.className = 'col-pane';
+        divider.insertAdjacentElement('afterend', newColPane);
+
+        // Mount the new CM — it pushes itself to the end of the array
+        const insertAt = cms.indexOf(cm) + 1;
+        this._mountColumnEditor(tabId, newColPane, after, insertAt, { scrollTop: 0, cursorPos: { line: 0, ch: 0 } });
+
+        // _mountColumnEditor pushes to end — splice it into the correct position
+        if (cms.length > insertAt + 1) {
+            const newCm = cms[cms.length - 1];
+            cms.splice(cms.length - 1, 1);
+            cms.splice(insertAt, 0, newCm);
+        }
+
+        // Save immediately to write the new <!column> delimiter to disk
+        const tab = this.tabs.find(t => t.id === tabId);
+        if (tab) tab.dirty = true;
+        this.saveTab(tabId);
+        this._renderTabsBar();
+
+        // Focus the new column
+        requestAnimationFrame(() => {
+            cms[insertAt]?.focus();
+            this._focusedColIndex[tabId] = insertAt;
+        });
+    },
+
+    _buildPreviewPane(tabId) {
+        const cms = this._editors[tabId];
+        const sections = cms && cms.length
+            ? cms.map(cm => cm.getValue())
+            : [this._getTabContent(tabId)];
+
+        const preview = document.createElement('div');
+        preview.className = 'preview-only-pane';
+        preview.dataset.tabId = tabId;
+
+        sections.forEach((section, i) => {
+            if (i > 0) {
+                const divider = document.createElement('div');
+                divider.className = 'col-divider';
+                preview.appendChild(divider);
+            }
+            const col = document.createElement('div');
+            col.className = 'preview-col-pane';
+            col.innerHTML = `<div class="preview-content">${mdToHtml(section)}</div>`;
+            preview.appendChild(col);
+        });
+
+        preview.addEventListener('click', e => {
+            const a = e.target.closest('a');
+            if (!a) return;
+            e.preventDefault();
+            if (a.classList.contains('wikilink'))
+                this.handleLinkClick({ href: a.dataset.target, isWiki: true });
+            else
+                window.open(a.href, '_blank');
+        });
+
+        return preview;
+    },
+
+    _getTabContent(tabId) {
+        const cms = this._editors[tabId];
+        if (!cms || !cms.length) return '';
+        return cms.map(cm => cm.getValue()).join('\n<!column>\n');
+    },
+
+    _getActiveCm(tabId) {
+        const cms = this._editors[tabId];
+        if (!cms || !cms.length) return null;
+        return cms[this._focusedColIndex[tabId] || 0] || cms[0];
+    },
+
+    addColumn() {
+        const tabId = this.activeTabId;
+        if (!tabId) return;
+        const cms = this._editors[tabId];
+        if (!cms || cms.length >= 4) return;
+
+        const pane = document.querySelector(`.editor-pane[data-tab-id="${tabId}"]`);
+        if (!pane) return;
+
+        // Add divider then new col-pane
+        const divider = document.createElement('div');
+        divider.className = 'col-divider';
+        pane.appendChild(divider);
+
+        const colPane = document.createElement('div');
+        colPane.className = 'col-pane';
+        pane.appendChild(colPane);
+
+        const newColIndex = cms.length;
+        this._mountColumnEditor(tabId, colPane, '', newColIndex, { scrollTop: 0, cursorPos: { line: 0, ch: 0 } });
+
+        // Update tab columns metadata
+        const tab = this.tabs.find(t => t.id === tabId);
+        if (tab) {
+            tab.columns = cms.map((cm, i) => {
+                const c = cm.getCursor();
+                return { scrollTop: cm.getScrollInfo().top, cursorPos: { line: c.line, ch: c.ch } };
+            });
+        }
+
+        // Immediately save so the <!column> delimiter is written to disk
+        this.saveTab(tabId);
+        this._renderTabsBar();
+
+        // Focus the new column
+        requestAnimationFrame(() => {
+            cms[newColIndex]?.focus();
+            this._focusedColIndex[tabId] = newColIndex;
+        });
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Spellcheck  (Typo.js + Hunspell en_US dictionary)
+    // ─────────────────────────────────────────────────────────────────────────
+    async _loadDictionary() {
+        try {
+            const [aff, dic] = await Promise.all([
+                fetch('./dict/en_US.aff').then(r => { if (!r.ok) throw new Error(); return r.text(); }),
+                fetch('./dict/en_US.dic').then(r => { if (!r.ok) throw new Error(); return r.text(); }),
+            ]);
+            this._typo = new Typo('en_US', aff, dic);
+            this._dictReady = true;
+            // Apply overlay to any editors already open when dict finishes loading
+            for (const cms of Object.values(this._editors)) {
+                cms.forEach(cm => cm.addOverlay(this._spellOverlay()));
+            }
+        } catch (e) {
+            console.warn('Cento: spellcheck dictionary failed to load.', e);
+        }
+    },
+
+    _spellOverlay() {
+        const typo = this._typo;
+        return {
+            name: 'spell',
+            token(stream) {
+                // Consume a run of letters (with optional internal apostrophe) as one token
+                if (stream.match(/^[a-zA-Z]+('[a-zA-Z]+)*/)) {
+                    const word = stream.current();
+                    // Ignore very short words and ALL-CAPS acronyms
+                    if (word.length <= 2)            return null;
+                    if (word === word.toUpperCase()) return null;
+                    return typo.check(word) ? null : 'spell-error';
+                }
+                // Skip everything that isn't the start of a word in one gulp
+                stream.eatWhile(/[^a-zA-Z]/);
+                // If eatWhile consumed nothing (e.g. a lone letter already handled
+                // or an edge case), advance one char to guarantee progress
+                if (stream.eol() === false && stream.current().length === 0) stream.next();
+                return null;
+            },
+        };
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Outline
     // ─────────────────────────────────────────────────────────────────────────
     _parseHeadings(content) {
@@ -1740,12 +1957,22 @@ const App = {
         const list = document.getElementById('outline-list');
         if (!list) return;
         list.innerHTML = '';
-        const cm = this._editors[this.activeTabId];
-        if (!cm) {
+        const cms = this._editors[this.activeTabId];
+        if (!cms || !cms.length) {
             list.innerHTML = '<div class="outline-empty">No note open.</div>';
             return;
         }
-        const headings = this._parseHeadings(cm.getValue());
+
+        // Collect headings across all columns, tracking which CM each belongs to
+        const headings = [];
+        cms.forEach((cm, colIdx) => {
+            const lines = cm.getValue().split('\n');
+            lines.forEach((line, localLine) => {
+                const m = line.match(/^(#{1,6}) (.*)/);
+                if (m) headings.push({ level: m[1].length, text: m[2].trim(), colIdx, localLine, cm });
+            });
+        });
+
         if (!headings.length) {
             list.innerHTML = '<div class="outline-empty">No headings found.</div>';
             return;
@@ -1756,9 +1983,12 @@ const App = {
             item.textContent = h.text;
             item.title = h.text;
             item.addEventListener('click', () => {
-                cm.setCursor({ line: h.line, ch: 0 });
-                cm.scrollIntoView({ line: h.line, ch: 0 }, 100);
-                if (this.editorMode === 'live') cm.focus();
+                h.cm.setCursor({ line: h.localLine, ch: 0 });
+                h.cm.scrollIntoView({ line: h.localLine, ch: 0 }, 100);
+                if (this.editorMode === 'live') {
+                    h.cm.focus();
+                    this._focusedColIndex[this.activeTabId] = h.colIdx;
+                }
             });
             list.appendChild(item);
         }

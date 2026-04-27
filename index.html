@@ -10,6 +10,7 @@
         <link rel="icon" type="image/x-icon" sizes="32x32" href="./favicon.ico">
         <script src="./local/codemirror.min.js"></script>
         <script src="./local/markdown.min.js"></script>
+        <script src="./local/typo.min.js"></script>
         <link rel="manifest" href="./manifest.json"/>
         <!-- SVG Sprite -->
         <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
@@ -64,6 +65,11 @@
                 <line x1="3" y1="12" x2="3.01" y2="12"/>
                 <line x1="3" y1="18" x2="3.01" y2="18"/>
             </symbol>
+            <symbol id="icon-column-add" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="7" height="18" rx="1"/>
+                <line x1="17" y1="9" x2="17" y2="15"/>
+                <line x1="14" y1="12" x2="20" y2="12"/>
+            </symbol>
         </svg>
 
     </head>
@@ -97,6 +103,16 @@
             </button>
             <div class="toolbar-right">
                 <span id="save-indicator"></span>
+                <button class="icon-btn" id="btn-add-column" data-tip="Add Column" style="display:none">
+                    <svg>
+                        <use href="#icon-column-add"/>
+                    </svg>
+                </button>
+                <button class="icon-btn" id="btn-toggle-outline" data-tip="Outline" style="display:none">
+                    <svg>
+                        <use href="#icon-list"/>
+                    </svg>
+                </button>
                 <button class="icon-btn" id="btn-toggle-preview" data-tip="Preview Mode" style="display:none">
                     <svg class="svg-eye">
                         <use href="#icon-eye"/>
@@ -108,11 +124,6 @@
                 <button class="icon-btn" id="btn-save" data-tip="Save (Ctrl+S)" style="display:none">
                     <svg>
                         <use href="#icon-save"/>
-                    </svg>
-                </button>
-                <button class="icon-btn" id="btn-toggle-outline" data-tip="Outline" style="display:none">
-                    <svg>
-                        <use href="#icon-list"/>
                     </svg>
                 </button>
             </div>
