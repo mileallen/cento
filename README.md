@@ -33,8 +33,8 @@ A separate section at the bottom of the sidebar that holds individually opened `
 ### Search
 Full-text search across all notes in the vault, with inline context previews and match highlighting.
 
-### Context Menu
-Right-click in the editor for quick formatting actions (bold, italic, highlight, superscript, subscript, blockquote, code block, copy, cut, paste) and to copy a Cento deep link to the current note.
+### Columns
+Often you want to view content side by side. In Obsidian, you can have tabs in adjacent panes. But they are each different markdown files. That means, outside the app, the connection between the content, the underlying reason you wanted them side by side, is lost. In Cento, you can split a single markdown file into columns. Even outside the context of this app, the content remains together, in a single file. More like an epub book with pagination.
 
 ### Keyboard Shortcuts
 | Shortcut | Action |
