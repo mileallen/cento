@@ -12,7 +12,7 @@ Cento is a minimal, offline-first markdown notes app that runs in the browser as
 
 **Obsidian** got the file format right. Your notes live as plain `.md` files in ordinary folders on your drive — no proprietary database, no lock-in. They are entirely portably and work in any text or markdown editor. Wikilinks let you build a web of connected thoughts. But its interface isn't ideal: a flat file tree scales poorly.
 
-**OneNote** has much better organisation. The Notebooks → Sections → Pages hierarchy maps naturally to how people think in mental classification trees. Also, a spatially structured layout aids complements memory. Think 'Mind Palaces'.
+**OneNote** has much better organisation. The Notebooks → Sections → Pages hierarchy maps naturally to how people think in mental classification trees. Also, a spatially structured layout complements memory. Think 'Mind Palaces'.
 
 **Cento** combines those features. Your notes are plain `.md` files in nested folders — fully portable, fully open. Conversely, you can bring over an existing Obsidian vault and it works out of the box. But the interface is organised like OneNote: open multiple notebooks side by side, navigate between sections as tabs, browse pages in a dedicated sidebar. You get the freedom of plain text and the clarity of a structured interface. It's your digital 2-D mind palace on a screen.
 
