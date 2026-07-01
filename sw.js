@@ -4,13 +4,14 @@
 // Bump CACHE_VERSION whenever you deploy updated files.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CACHE_VERSION = 'cento-v4';
+const CACHE_VERSION = 'cento-v1';
 
 const STATIC_ASSETS = [
     './',
     'index.html',
     'looks.css',
     'app.js',
+    'components.js',
     'manifest.json',
     'local/codemirror.min.js',
     'local/codemirror.min.css',
@@ -21,6 +22,8 @@ const STATIC_ASSETS = [
     'fonts/DM-Sans-400-normal.woff2',
     'fonts/DM-Sans-500-normal.woff2',
     'fonts/DM-Sans-600-normal.woff2',
+    'fonts/Inter-300.ttf',
+    'fonts/Inter-400.ttf',
     'fonts/Lora-400-normal.woff2',
     'fonts/Lora-400-italic.woff2',
     'fonts/Lora-600-normal.woff2',

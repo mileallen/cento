@@ -10,9 +10,13 @@
         <link rel="icon" type="image/x-icon" sizes="32x32" href="./favicon.ico">
         <script src="./local/codemirror.min.js"></script>
         <script src="./local/markdown.min.js"></script>
-        <script src="./local/typo.min.js"></script>
+        <!-- app.js must load before components.js: it defines mdToHtml,
+             rebuildDecorations and the App object that components.js uses. -->
+        <script src="./app.js"></script>
+        <script src="./components.js"></script>
         <link rel="manifest" href="./manifest.json"/>
-        <!-- SVG Sprite -->
+
+        <!-- SVG Sprite — all icons referenced via <use href="#icon-…"> -->
         <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
             <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="9 18 15 12 9 6"/>
@@ -58,92 +62,151 @@
                 <polyline points="7 3 7 8 15 8"/>
             </symbol>
             <symbol id="icon-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="8" y1="6" x2="21" y2="6"/>
-                <line x1="8" y1="12" x2="21" y2="12"/>
-                <line x1="8" y1="18" x2="21" y2="18"/>
-                <line x1="3" y1="6" x2="3.01" y2="6"/>
-                <line x1="3" y1="12" x2="3.01" y2="12"/>
-                <line x1="3" y1="18" x2="3.01" y2="18"/>
+                <line x1="8"  y1="6"  x2="21" y2="6"/>
+                <line x1="8"  y1="12" x2="21" y2="12"/>
+                <line x1="8"  y1="18" x2="21" y2="18"/>
+                <line x1="3"  y1="6"  x2="3.01" y2="6"/>
+                <line x1="3"  y1="12" x2="3.01" y2="12"/>
+                <line x1="3"  y1="18" x2="3.01" y2="18"/>
             </symbol>
+            <!-- Column add: existing column rect + plus sign -->
             <symbol id="icon-column-add" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="2" y="3" width="7" height="18" rx="1"/>
-                <line x1="17" y1="9" x2="17" y2="15"/>
+                <line x1="17" y1="9"  x2="17" y2="15"/>
                 <line x1="14" y1="12" x2="20" y2="12"/>
             </symbol>
+            <!-- Column remove: existing column rect + minus sign -->
+            <symbol id="icon-column-remove" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="7" height="18" rx="1"/>
+                <line x1="14" y1="12" x2="20" y2="12"/>
+            </symbol>
+            <!-- Notebook: open book -->
+            <symbol id="icon-notebook" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+            </symbol>
+            <!-- Navigation arrows -->
+            <symbol id="icon-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"/>
+                <polyline points="12 19 5 12 12 5"/>
+            </symbol>
+            <symbol id="icon-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="5" y1="12" x2="19" y2="12"/>
+                <polyline points="12 5 19 12 12 19"/>
+            </symbol>
+            <!-- Settings: classic gear / cog -->
+            <symbol id="icon-settings" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </symbol>
+            <!-- Open file: file with arrow-up-from-bracket feel — file + small up-right arrow -->
+            <symbol id="icon-file-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="12" y1="18" x2="12" y2="12"/>
+                <polyline points="9 12 12 9 15 12"/>
+            </symbol>
         </svg>
-
     </head>
+
     <body>
+        <!-- ─── Toolbar ───────────────────────────────────────────────────── -->
         <div id="toolbar">
-            <span class="app-name">
-                Cen<span>to</span>
-            </span>
-            <button class="icon-btn" id="btn-open-vault" data-tip="Open Vault">
-                <svg>
-                    <use href="#icon-folder-open"/>
-                </svg>
+            <span class="app-name">Cen<span>to</span></span>
+
+            <!-- Open a new notebook folder -->
+            <button class="icon-btn" id="btn-open-notebook" data-tip="Open Notebook">
+                <svg><use href="#icon-notebook"/></svg>
             </button>
-            <div id="vault-name" style="display:none"></div>
-            <div class="toolbar-sep"></div>
-            <button class="icon-btn" id="btn-new-file" data-tip="New File" disabled>
-                <svg>
-                    <use href="#icon-file-plus"/>
-                </svg>
+
+            <!-- Open an isolated .md file into the Drawer -->
+            <button class="icon-btn" id="btn-open-file" data-tip="Open File in Drawer">
+                <svg><use href="#icon-file-open"/></svg>
             </button>
+
+            <!-- In-session back / forward navigation (history clears on reload) -->
+            <button class="icon-btn" id="btn-nav-back" data-tip="Back" disabled>
+                <svg><use href="#icon-arrow-left"/></svg>
+            </button>
+            <button class="icon-btn" id="btn-nav-forward" data-tip="Forward" disabled>
+                <svg><use href="#icon-arrow-right"/></svg>
+            </button>
+
             <div class="toolbar-sep"></div>
-            <button class="icon-btn active" id="btn-sidebar-tree" data-tip="File Tree">
-                <svg>
-                    <use href="#icon-folder"/>
-                </svg>
+
+            <!-- Create a new page in the active section -->
+            <button class="icon-btn" id="btn-new-page" data-tip="New Page" disabled>
+                <svg><use href="#icon-file-plus"/></svg>
+            </button>
+
+            <div class="toolbar-sep"></div>
+
+            <!-- Toggle left sidebar between notebooks list and search -->
+            <button class="icon-btn active" id="btn-sidebar-notebooks" data-tip="Notebooks">
+                <svg><use href="#icon-folder"/></svg>
             </button>
             <button class="icon-btn" id="btn-sidebar-search" data-tip="Search">
-                <svg>
-                    <use href="#icon-search"/>
-                </svg>
+                <svg><use href="#icon-search"/></svg>
             </button>
+
+            <!-- Right-aligned group: save status + column buttons + mode toggles + save -->
             <div class="toolbar-right">
                 <span id="save-indicator"></span>
+
+                <!-- Column add/remove — side by side like other toolbar buttons -->
                 <button class="icon-btn" id="btn-add-column" data-tip="Add Column" style="display:none">
-                    <svg>
-                        <use href="#icon-column-add"/>
-                    </svg>
+                    <svg><use href="#icon-column-add"/></svg>
                 </button>
+                <button class="icon-btn" id="btn-remove-column" data-tip="Remove Last Column" style="display:none" disabled>
+                    <svg><use href="#icon-column-remove"/></svg>
+                </button>
+
                 <button class="icon-btn" id="btn-toggle-outline" data-tip="Outline" style="display:none">
-                    <svg>
-                        <use href="#icon-list"/>
-                    </svg>
+                    <svg><use href="#icon-list"/></svg>
                 </button>
+
                 <button class="icon-btn" id="btn-toggle-preview" data-tip="Preview Mode" style="display:none">
-                    <svg class="svg-eye">
-                        <use href="#icon-eye"/>
-                    </svg>
-                    <svg class="svg-edit" style="display:none">
-                        <use href="#icon-edit"/>
-                    </svg>
+                    <svg class="svg-eye"><use href="#icon-eye"/></svg>
+                    <svg class="svg-edit" style="display:none"><use href="#icon-edit"/></svg>
                 </button>
+
                 <button class="icon-btn" id="btn-save" data-tip="Save (Ctrl+S)" style="display:none">
-                    <svg>
-                        <use href="#icon-save"/>
-                    </svg>
+                    <svg><use href="#icon-save"/></svg>
+                </button>
+
+                <div class="toolbar-sep"></div>
+
+                <button class="icon-btn" id="btn-settings" data-tip="Settings">
+                    <svg><use href="#icon-settings"/></svg>
                 </button>
             </div>
         </div>
+
+        <!-- ─── Main layout ──────────────────────────────────────────────── -->
         <div id="layout">
+
+            <!-- Left sidebar: notebooks list + search + drawer -->
             <div id="sidebar">
-                <!-- File Tree panel -->
-                <div id="panel-tree" class="sidebar-panel">
+
+                <!-- Notebooks panel (default view) -->
+                <div id="panel-notebooks" class="sidebar-panel">
                     <div class="sidebar-header">
-                        <span class="sidebar-header-title" id="sidebar-vault-name">No Vault</span>
+                        <span class="sidebar-header-title">Notebooks</span>
                     </div>
-                    <div class="file-tree">
-                        <div id="no-vault-msg" class="sidebar-empty">Open a vault folder to get started.</div>
-                        <div id="file-tree-root"></div>
+                    <!-- <notebook-entry> elements are injected here by App.renderNotebookList() -->
+                    <div id="notebook-list">
+                        <div id="no-notebook-msg" class="sidebar-empty">
+                            Open a notebook folder to get started.
+                        </div>
                     </div>
+
+                    <!-- Drawer: .md files opened directly from the OS -->
                     <div id="drawer-section" style="display:none">
                         <div class="drawer-section-header">Drawer</div>
                         <div id="drawer-list"></div>
                     </div>
                 </div>
+
                 <!-- Search panel -->
                 <div id="panel-search" class="sidebar-panel" style="display:none">
                     <div class="sidebar-header">
@@ -158,24 +221,61 @@
                         <div id="search-results-list"></div>
                     </div>
                 </div>
-            </div>
+
+            </div><!-- /#sidebar -->
+
+            <!-- Drag handle between left sidebar and main area -->
             <div id="resize-left" class="sidebar-resize-handle"></div>
+
+            <!-- Main editor area: section tabs on top, editor pane below -->
             <div id="main">
-                <div id="tabs-bar" style="display:none"></div>
+                <!-- <section-tabs> is a Web Component. It renders the horizontal
+                     scrollable row of section tabs for the active notebook.
+                     Populated via setAttribute() from App.renderSectionTabs(). -->
+                <section-tabs id="section-tabs-el" style="display:none"></section-tabs>
+
                 <div id="editor-area">
+                    <!-- Welcome screen shown when no notebook/page is open -->
                     <div id="welcome">
                         <h2>Welcome to Cento</h2>
-                        <p>Open a vault folder to work with markdown notes.</p>
+                        <p>Open a notebook folder to get started.</p>
                         <div class="btn-row">
-                            <button class="open-btn" id="btn-reopen-vault" style="display:none">Reopen</button>
-                            <button class="open-btn" id="btn-open-vault-welcome">Open Vault</button>
+                            <button class="open-btn" id="btn-open-notebook-welcome">Open Notebook</button>
+                            <button class="open-btn open-btn-secondary" id="btn-open-file-welcome">Open File</button>
                         </div>
                         <h3>&copy; S Wry MMXXVI</h3>
                     </div>
-                    <div id="panes-container" style="position:absolute;inset:0;pointer-events:none;"></div>
+
+                    <!-- panes-container holds the <cento-editor> Web Component.
+                         The component manages its own .editor-pane and
+                         .preview-only-pane children internally. -->
+                    <div id="panes-container" style="position:absolute;inset:0;pointer-events:none;">
+                        <cento-editor id="editor" style="display:none;position:absolute;inset:0;pointer-events:auto;"></cento-editor>
+                    </div>
+                </div>
+            </div><!-- /#main -->
+
+            <!-- Drag handle on the left edge of the page-list panel.
+                 Dragging left widens the panel; dragging right narrows it. -->
+            <div id="resize-page" class="sidebar-resize-handle"></div>
+
+            <!-- Page list panel: shows pages for the active section.
+                 <page-list> is a Web Component container; App.renderPageList()
+                 populates it with <page-list-item> custom elements. -->
+            <div id="page-list-panel">
+                <div id="panel-pages" class="sidebar-panel">
+                    <div class="sidebar-header">
+                        <span class="sidebar-header-title" id="page-list-section-name"></span>
+                    </div>
+                    <page-list id="page-list-component"></page-list>
                 </div>
             </div>
+
+            <!-- Drag handle between main/page-list and outline sidebar.
+                 Hidden when outline is not visible. -->
             <div id="resize-right" class="sidebar-resize-handle" style="display:none"></div>
+
+            <!-- Outline sidebar (right): toggle with the list icon in toolbar -->
             <div id="right-sidebar" style="display:none">
                 <div id="panel-outline" class="sidebar-panel">
                     <div class="sidebar-header">
@@ -186,12 +286,17 @@
                     </div>
                 </div>
             </div>
-        </div>
+
+        </div><!-- /#layout -->
+
+        <!-- ─── Overlays ─────────────────────────────────────────────────── -->
         <div id="toast"></div>
+
         <div id="context-menu">
             <div class="ctx-item" id="ctx-rename">Rename</div>
             <div class="ctx-item danger" id="ctx-delete">Delete</div>
         </div>
+
         <dialog id="confirm-dialog">
             <p id="confirm-message"></p>
             <div class="confirm-buttons">
@@ -199,9 +304,66 @@
                 <button id="confirm-cancel">Cancel</button>
             </div>
         </dialog>
-        <script src="app.js"></script>
+
+        <!-- Welcome screen Open File button wires up in app.js -->
+
+        <!-- ─── Settings Modal ───────────────────────────────────────────────── -->
+        <dialog id="settings-dialog">
+            <div class="settings-header">
+                <span class="settings-title">Typography Settings</span>
+                <button class="settings-close icon-btn" id="btn-settings-close" title="Close">
+                    <svg><use href="#icon-x"/></svg>
+                </button>
+            </div>
+            <div class="settings-body">
+
+                <!-- Font role tabs -->
+                <div class="settings-role-tabs">
+                    <button class="settings-role-tab active" data-role="body">Body</button>
+                    <button class="settings-role-tab" data-role="h1">H1</button>
+                    <button class="settings-role-tab" data-role="h2">H2</button>
+                    <button class="settings-role-tab" data-role="h3">H3</button>
+                </div>
+
+                <!-- Font picker -->
+                <div class="settings-section-label">Font</div>
+                <div class="settings-font-grid" id="settings-font-grid">
+                    <!-- Populated by JS -->
+                </div>
+
+                <!-- Size -->
+                <div class="settings-row">
+                    <div class="settings-section-label">Size</div>
+                    <div class="settings-size-row">
+                        <input type="range" id="settings-size-slider" min="5" max="64" step="1" value="14">
+                        <span id="settings-size-value" class="settings-size-num">14</span>
+                        <span class="settings-size-unit">px</span>
+                    </div>
+                </div>
+
+                <!-- Weight -->
+                <div class="settings-section-label">Weight</div>
+                <div class="settings-weight-row" id="settings-weight-row">
+                    <!-- Populated by JS -->
+                </div>
+
+                <!-- Live preview strip -->
+                <div class="settings-preview-label">Preview</div>
+                <div class="settings-preview-wrap">
+                    <div id="settings-preview-text" class="settings-preview-text">
+                        The quick brown fox jumps over the lazy dog
+                    </div>
+                </div>
+
+            </div>
+            <div class="settings-footer">
+                <button id="btn-settings-reset" class="settings-btn-secondary">Reset to Defaults</button>
+                <button id="btn-settings-apply" class="settings-btn-primary">Apply</button>
+            </div>
+        </dialog>
+
         <script>
-            if ('serviceWorker'in navigator) {
+            if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.register('./sw.js');
             }
         </script>
