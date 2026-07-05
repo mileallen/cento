@@ -1,0 +1,11 @@
+v8 - web+cento protocol
+
+v7 - first copy in github projects, 16 mar 2026
+
+v6 - PWA, minor issues
+
+v5 - blockquote fixed; support for highlight, super and subscript; custom <dialog>
+
+v4 - context menus in editor and preview panes, search context correct.
+
+v3 - only sidebar context menu
