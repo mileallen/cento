@@ -12,21 +12,36 @@ const NOTEBOOK_SESSION    = '.cento-notebook.json';
 const AUTOSAVE_MS         = 1500;
 const SESSION_MS          = 1000;
 
+// Reserved name for the "direct pages" pseudo-tab that appears as the first
+// tab in the sub-section tabs row. Clicking it sets activeSubsection = null
+// (i.e. the page list shows the section's direct .md files). Using a reserved
+// sentinel instead of a human-readable string like "Pages" avoids any chance
+// of collision with a real sub-section folder name. The <section-tabs>
+// component renders this tab with the friendly label "Pages" via sec.label.
+const PAGES_PSEUDO_TAB    = '__pages__';
+
+// Supported themes. The active theme is applied as data-theme on <html> and
+// persisted in the app-state IDB store (key 'theme') so it survives reloads.
+// The CSS for each palette lives in looks.css under [data-theme="..."].
+const THEMES = ['dark', 'cream'];
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Typography settings — font catalog, weight scale, and defaults.
-// All 7 fonts are loaded locally as TTFs from /fonts (see looks.css @font-face).
+// Each family is now a single variable-font TTF (see looks.css @font-face),
+// so the weight lists below reflect the full wght axis each variable font
+// actually supports — users can pick any of these in the Settings dialog.
 // ─────────────────────────────────────────────────────────────────────────────
 const FONT_CATALOG = [
-    { id: 'dm-sans',         label: 'DM Sans',           stack: "'DM Sans', system-ui, sans-serif",        tag: 'Sans · Screen',  weights: [300, 400, 500, 600, 700, 800, 900] },
-    { id: 'inter',           label: 'Inter',             stack: "'Inter', system-ui, sans-serif",          tag: 'Sans · Screen',  weights: [300, 400, 500, 600, 700, 800, 900] },
-    { id: 'ibm-plex-sans',   label: 'IBM Plex Sans',     stack: "'IBM Plex Sans', system-ui, sans-serif",  tag: 'Sans · Screen',  weights: [300, 400, 500, 600, 700] },
-    { id: 'jetbrains-mono',  label: 'JetBrains Mono',    stack: "'JetBrains Mono', 'Fira Code', monospace",tag: 'Mono',           weights: [300, 400, 500, 600, 700, 800] },
+    { id: 'dm-sans',         label: 'DM Sans',           stack: "'DM Sans', system-ui, sans-serif",        tag: 'Sans · Screen',  weights: [100, 200, 300, 400, 500, 600, 700, 800, 900] },
+    { id: 'inter',           label: 'Inter',             stack: "'Inter', system-ui, sans-serif",          tag: 'Sans · Screen',  weights: [100, 200, 300, 400, 500, 600, 700, 800, 900] },
+    { id: 'ibm-plex-sans',   label: 'IBM Plex Sans',     stack: "'IBM Plex Sans', system-ui, sans-serif",  tag: 'Sans · Screen',  weights: [100, 200, 300, 400, 500, 600, 700] },
+    { id: 'jetbrains-mono',  label: 'JetBrains Mono',    stack: "'JetBrains Mono', 'Fira Code', monospace",tag: 'Mono',           weights: [100, 200, 300, 400, 500, 600, 700, 800] },
     { id: 'lora',            label: 'Lora',              stack: "'Lora', Georgia, serif",                  tag: 'Serif',          weights: [400, 500, 600, 700] },
-    { id: 'source-serif-4',  label: 'Source Serif 4',    stack: "'Source Serif 4', Georgia, serif",        tag: 'Serif',          weights: [300, 400, 500, 600, 700, 800, 900] },
+    { id: 'source-serif-4',  label: 'Source Serif 4',    stack: "'Source Serif 4', Georgia, serif",        tag: 'Serif',          weights: [200, 300, 400, 500, 600, 700, 800, 900] },
     { id: 'playfair-display',label: 'Playfair Display',  stack: "'Playfair Display', Georgia, serif",      tag: 'Display Serif',  weights: [400, 500, 600, 700, 800, 900] },
 ];
 
-const WEIGHT_NAMES = { 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'Semibold', 700: 'Bold', 800: 'Extrabold', 900: 'Heavy' };
+const WEIGHT_NAMES = { 100: 'Thin', 200: 'Extralight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'Semibold', 700: 'Bold', 800: 'Extrabold', 900: 'Heavy' };
 
 const TYPOGRAPHY_DEFAULTS = {
     body: { font: 'dm-sans', size: 14, weight: 400 },
@@ -103,6 +118,29 @@ async function dbGetAppState() {
     });
 }
 
+/** Persist the active theme ('dark' | 'cream') under its own key in the
+ *  app-state store. Separate from 'global' so a future schema change to
+ *  the global state object can't clobber the theme preference. */
+async function dbSetTheme(theme) {
+    const db = await openDB();
+    return new Promise((res, rej) => {
+        const tx = db.transaction(STATE_STORE, 'readwrite');
+        tx.objectStore(STATE_STORE).put(theme, 'theme');
+        tx.oncomplete = res;
+        tx.onerror    = () => rej(tx.error);
+    });
+}
+
+async function dbGetTheme() {
+    const db = await openDB();
+    return new Promise((res, rej) => {
+        const r = db.transaction(STATE_STORE, 'readonly')
+                    .objectStore(STATE_STORE).get('theme');
+        r.onsuccess = () => res(r.result || null);
+        r.onerror   = () => rej(r.error);
+    });
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // File system helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -171,7 +209,15 @@ function mdToHtml(md) {
         if (raw.startsWith('> ')) { out.push(`<blockquote>${line.slice(5)}</blockquote>`); continue; }
         if (/^\s*[-*]\s/.test(raw)) { out.push(`<li>${line.replace(/^\s*[-*]\s/,'')}</li>`); continue; }
         if (/^\d+\.\s/.test(raw)) { out.push(`<li>${line.replace(/^\d+\.\s/,'')}</li>`); continue; }
-        if (line.trim() === '') { out.push('<p></p>'); continue; }
+        // if (line.trim() === '') { out.push('<p></p>'); continue; }   // replaced below to match Live and Preview
+
+        if (line.trim() === '') {
+            let blanks = 1;
+            while (i + 1 < lines.length && lines[i + 1].trim() === '') { i++; blanks++; }
+            out.push(`<div class="md-vspace" style="height:${blanks * 0.7}em"></div>`);
+            continue;
+        }
+        
         out.push(`<p>${line}</p>`);
     }
     return out.join('\n').replace(/(<li>.*<\/li>\n?)+/g, m => `<ul>${m}</ul>`);
@@ -275,10 +321,19 @@ const App = {
 
     // ── State ──────────────────────────────────────────────────────────────────
     // Each notebook in the array: { id, name, handle, sections, unfiledPages, session }
-    // sections: [{ name, handle, path, pages }]   pages: recursive PageNode tree
+    // sections: [{ name, handle, path, pages, subsections }]
+    //   - pages       : recursive PageNode tree of .md files directly in the section
+    //   - subsections : [{ name, handle, path, pages }] — folders one level deep
+    //                    inside the section. Each subsection.pages is itself a
+    //                    recursive PageNode tree (the paired-directory pattern
+    //                    still applies at deeper levels inside a sub-section).
+    // PageNode : { name, title, path, handle, type:'page'|'group', children:[] }
     notebooks:        [],
     activeNotebookId: null,
     activeSection:    null,   // section name string, or 'Unfiled'
+    activeSubsection: null,   // sub-section name string within the active section,
+                              // or null when viewing the section's direct pages
+                              // (i.e. the "Pages" pseudo-tab is active).
     activePage:       null,   // path relative to notebook root  e.g. "Research/note.md"
     activePageHandle: null,   // FileSystemFileHandle for the open page
     activePageDirty:  false,
@@ -295,13 +350,14 @@ const App = {
     searchRan:        false,
     saveStatus:       '',
     renamingPath:     null,
+    activeTheme:      'dark',  // 'dark' | 'cream' — applied as data-theme on <html>
     typography:       JSON.parse(JSON.stringify(TYPOGRAPHY_DEFAULTS)), // current notebook's font settings
 
     // ── Internals ──────────────────────────────────────────────────────────────
     _sessionTimers:   {},   // one debounce timer per notebook id
     _saveTimer:       null,
     _outlineTimer:    null,
-    _navHistory:      [],   // [{notebookId, section, pagePath, handle}] — in-memory only
+    _navHistory:      [],   // [{notebookId, section, subsection, pagePath, handle}] — in-memory only
     _navIndex:        -1,   // current position in _navHistory
     _navigating:      false,// true while executing a back/forward jump (suppress push)
     _ctxNode:         null,
@@ -346,6 +402,8 @@ const App = {
             .addEventListener('click', () => this.navBack());
         document.getElementById('btn-nav-forward')
             .addEventListener('click', () => this.navForward());
+        document.getElementById('btn-theme')
+            .addEventListener('click', () => this.toggleTheme());
 
         // ── Search ───────────────────────────────────────────────────────────
         document.getElementById('btn-search-go')
@@ -362,13 +420,37 @@ const App = {
         // ── Section tabs (custom element events) ─────────────────────────────
         const sectionTabsEl = document.getElementById('section-tabs-el');
         sectionTabsEl.addEventListener('section-change', e => {
+            const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
             this.activeSection = e.detail.section;
+            // Resolve the active sub-section for the newly-selected section:
+            // restore the last-active sub-section from session, or default to
+            // the first sub-section (or null if the section has no sub-sections).
+            this.activeSubsection = nb ? this._resolveActiveSubsection(nb, e.detail.section) : null;
+            this._rememberLastSubsection(this.activeSection, this.activeSubsection);
             this.renderSectionTabs(this.activeNotebookId); // update active highlight
-            this.renderPageList(this.activeSection);
+            this.renderSubsectionTabs(this.activeNotebookId); // show/hide + update sub row
+            this.renderPageList(this.activeSection, this.activeSubsection);
             this.scheduleNotebookSessionSave(this.activeNotebookId);
             this._openDefaultPageForSection(e.detail.section);
         });
         sectionTabsEl.addEventListener('section-add', e => this.addSection(e.detail.name));
+
+        // ── Sub-section tabs (custom element events) ─────────────────────────
+        // Same <section-tabs> custom element, but with variant="subsection" so
+        // it fires subsection-change / subsection-add instead of section-*.
+        // The first tab is always the "Pages" pseudo-tab (PAGES_PSEUDO_TAB)
+        // which represents the section's direct .md files (activeSubsection=null).
+        const subsectionTabsEl = document.getElementById('subsection-tabs-el');
+        subsectionTabsEl.addEventListener('subsection-change', e => {
+            const clicked = e.detail.section;
+            this.activeSubsection = (clicked === PAGES_PSEUDO_TAB) ? null : clicked;
+            this._rememberLastSubsection(this.activeSection, this.activeSubsection);
+            this.renderSubsectionTabs(this.activeNotebookId); // update active highlight
+            this.renderPageList(this.activeSection, this.activeSubsection);
+            this.scheduleNotebookSessionSave(this.activeNotebookId);
+            this._openDefaultPageForSection(this.activeSection);
+        });
+        subsectionTabsEl.addEventListener('subsection-add', e => this.addSubsection(e.detail.name));
 
         // ── Page list (custom element events) ────────────────────────────────
         const pageListEl = document.getElementById('page-list-component');
@@ -512,10 +594,19 @@ const App = {
         // ── Initial renders ───────────────────────────────────────────────────
         this._renderToolbar();
         this._renderSidebar();
+        this._renderThemeButton();   // sets the correct sun/moon icon for the default theme
 
         // ── Restore notebooks from IndexedDB ──────────────────────────────────
         (async () => {
             try {
+                // Restore the saved theme as early as possible so the first
+                // paint isn't a flash of the default dark theme when the user
+                // had previously chosen cream.
+                const savedTheme = await dbGetTheme();
+                if (savedTheme && THEMES.includes(savedTheme) && savedTheme !== this.activeTheme) {
+                    this.applyTheme(savedTheme);
+                }
+
                 const [stored, state] = await Promise.all([dbGetAllNotebooks(), dbGetAppState()]);
                 for (const rec of stored) {
                     const perm = await rec.handle.queryPermission({ mode: 'readwrite' });
@@ -598,6 +689,7 @@ const App = {
         if (this.activeNotebookId === id) {
             this.activeNotebookId = null;
             this.activeSection    = null;
+            this.activeSubsection = null;
             this.activePage       = null;
             this.activePageHandle = null;
             this.activeIsDrawer   = false;
@@ -605,6 +697,7 @@ const App = {
             document.getElementById('editor').style.display = 'none';
             document.getElementById('welcome').style.display = '';
             document.getElementById('section-tabs-el').style.display = 'none';
+            document.getElementById('subsection-tabs-el').style.display = 'none';
             document.getElementById('page-list-panel').style.display = 'none';
             document.getElementById('page-list-component').innerHTML = '';
 
@@ -639,6 +732,8 @@ const App = {
 
         this.renderNotebookList();
         this.renderSectionTabs(id);
+        this.renderSubsectionTabs(id);   // preliminary: hides stale sub-section row if the
+                                         // previous notebook's activeSection isn't in this one
         this._renderToolbar();
         this._applyWidths();
 
@@ -647,8 +742,14 @@ const App = {
         const section = s.activeSection || nb.sections[0]?.name || (nb.unfiledPages.length ? 'Unfiled' : null);
         if (section) {
             this.activeSection = section;
+            // Resolve the active sub-section for this section (last-active from
+            // session, else first sub-section, else null when no sub-sections).
+            this.activeSubsection = this._resolveActiveSubsection(nb, section);
             this.renderSectionTabs(id);   // re-render to reflect active section
-            this.renderPageList(section);
+            this.renderSubsectionTabs(id); // show/hide sub-section row + highlight
+            this.renderPageList(section, this.activeSubsection);
+        } else {
+            this.activeSubsection = null;
         }
 
         if (s.activePage) {
@@ -663,6 +764,20 @@ const App = {
     // ─────────────────────────────────────────────────────────────────────────
     // Notebook scanning
     // Builds the sections[] and unfiledPages[] on the notebook object.
+    //
+    // Hierarchy:
+    //   Notebook root
+    //     ├─ <Section>/            (top-level directory → Section)
+    //     │    ├─ Page.md          (direct page of the section)
+    //     │    ├─ <Sub-section>/   (folder one level deep → Sub-section)
+    //     │    │    └─ ...         (recursive PageNode tree, paired-directory pattern applies)
+    //     │    └─ ...
+    //     └─ Page.md               (unfiled page at notebook root)
+    //
+    // The paired-directory pattern (Foo.md + Foo/ → Foo is a parent page with
+    // children) is NOT applied at the section's top level: any folder there is
+    // a sub-section, period. The pattern still works at deeper levels (inside
+    // sub-sections and inside page-paired directories) via _scanPageLevel.
     // ─────────────────────────────────────────────────────────────────────────
 
     async _scanNotebook(nb) {
@@ -670,8 +785,8 @@ const App = {
         for await (const [name, entry] of nb.handle.entries()) {
             if (name.startsWith('.') || name === NOTEBOOK_SESSION) continue;
             if (entry.kind === 'directory') {
-                const pages = await this._scanPageLevel(entry, name);
-                sections.push({ name, handle: entry, path: name, pages });
+                const { pages, subsections } = await this._scanSectionTopLevel(entry, name);
+                sections.push({ name, handle: entry, path: name, pages, subsections });
             } else if (name.endsWith('.md')) {
                 unfiledPages.push({ name, title: name.replace(/\.md$/, ''), path: name, handle: entry, type: 'page', children: [] });
             }
@@ -680,6 +795,45 @@ const App = {
         unfiledPages.sort((a, b) => a.name.localeCompare(b.name));
         nb.sections     = sections;
         nb.unfiledPages = unfiledPages;
+    },
+
+    /**
+     * Scan a section's top level. .md files become the section's direct pages
+     * (NO paired-directory pairing at this level). Directories become sub-sections,
+     * each scanned with _scanPageLevel for their page trees (where the paired-
+     * directory pattern DOES apply at deeper levels).
+     */
+    async _scanSectionTopLevel(sectionHandle, sectionPath) {
+        const files = {}, dirs = {};
+        for await (const [name, entry] of sectionHandle.entries()) {
+            if (name.startsWith('.')) continue;
+            if (entry.kind === 'directory') dirs[name]  = entry;
+            else if (name.endsWith('.md'))  files[name] = entry;
+        }
+
+        // Direct pages — .md files sitting at the section's top level.
+        // They have no paired children here because any folder at this level
+        // is a sub-section, not a paired directory.
+        const pages = [];
+        for (const [fileName, fh] of Object.entries(files)) {
+            const title    = fileName.replace(/\.md$/, '');
+            const pagePath = `${sectionPath}/${fileName}`;
+            pages.push({ name: fileName, title, path: pagePath, handle: fh, type: 'page', children: [] });
+        }
+        pages.sort((a, b) => a.title.localeCompare(b.title));
+
+        // Sub-sections — every directory at the section's top level.
+        // Each is scanned with _scanPageLevel, so the existing paired-directory
+        // pattern continues to work for nested page hierarchies inside them.
+        const subsections = [];
+        for (const [dirName, dh] of Object.entries(dirs)) {
+            const subPath = `${sectionPath}/${dirName}`;
+            const subPages = await this._scanPageLevel(dh, subPath);
+            subsections.push({ name: dirName, handle: dh, path: subPath, pages: subPages });
+        }
+        subsections.sort((a, b) => a.name.localeCompare(b.name));
+
+        return { pages, subsections };
     },
 
     /**
@@ -736,19 +890,28 @@ const App = {
         this.activePageDirty  = false;
         this.activeIsDrawer   = false;
 
-        // Remember which page was last open in this section (for section-tab switching)
+        // Remember which page was last open in this section+sub-section
+        // (so section/sub-section tab switches can restore it). The key is
+        // "Section" when no sub-section is active, or "Section/Subsection" —
+        // this preserves backward-compat with old sessions that only used
+        // the section name as the key.
         if (this.activeNotebookId && this.activeSection) {
             const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
             if (nb) {
                 nb.session = nb.session || {};
                 nb.session.sectionLastPage = nb.session.sectionLastPage || {};
-                nb.session.sectionLastPage[this.activeSection] = pagePath;
+                nb.session.sectionLastPage[this._subsectionKey(this.activeSection, this.activeSubsection)] = pagePath;
             }
         }
 
         // Push to in-memory navigation history unless we're executing a back/forward jump
         if (!this._navigating) {
-            this._pushHistory({ notebookId: this.activeNotebookId, section: this.activeSection, pagePath, handle });
+            this._pushHistory({
+                notebookId: this.activeNotebookId,
+                section:     this.activeSection,
+                subsection:  this.activeSubsection,
+                pagePath, handle
+            });
         }
 
         const editorEl = document.getElementById('editor');
@@ -759,7 +922,7 @@ const App = {
         editorEl.load(content, columnsData);
 
         this._renderToolbar();
-        this.renderPageList(this.activeSection);
+        this.renderPageList(this.activeSection, this.activeSubsection);
         if (this.outlineVisible) this._renderOutline();
         this.scheduleNotebookSessionSave(this.activeNotebookId);
     },
@@ -806,6 +969,7 @@ const App = {
 
         const session = {
             activeSection:    this.activeSection,
+            activeSubsection: this.activeSubsection,
             activePage:       this.activePage,
             sidebarWidth:     this.sidebarWidth,
             pageListWidth:    this.pageListWidth,
@@ -814,6 +978,7 @@ const App = {
             typography:       this.typography,
             expandedPages:    nb.session?.expandedPages    || [],
             sectionLastPage:  nb.session?.sectionLastPage  || {},
+            sectionLastSubsection: nb.session?.sectionLastSubsection || {},
             pageStates:       nb.session?.pageStates       || {},
         };
 
@@ -872,25 +1037,40 @@ const App = {
         const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
         if (!nb) return;
 
-        let sectionHandle;
+        // Resolve the directory where the new page should be created:
+        //   - active sub-section's directory  (when a sub-section is active)
+        //   - section's directory             (otherwise)
+        //   - notebook root                   (for the 'Unfiled' pseudo-section)
+        // `basePath` is the folder path relative to the notebook root, used to
+        // compute the new page's full path string for session/storage lookups.
+        let dirHandle, basePath;
         if (this.activeSection === 'Unfiled') {
-            sectionHandle = nb.handle;
+            dirHandle = nb.handle;
+            basePath  = '';
         } else {
             const section = nb.sections.find(s => s.name === this.activeSection);
             if (!section) return;
-            sectionHandle = section.handle;
+            if (this.activeSubsection) {
+                const sub = section.subsections?.find(s => s.name === this.activeSubsection);
+                if (!sub) return;
+                dirHandle = sub.handle;
+                basePath  = sub.path;          // "Section/Sub"
+            } else {
+                dirHandle = section.handle;
+                basePath  = section.path;      // "Section"
+            }
         }
 
-        const filename = await uniqueFilename(sectionHandle, 'Untitled');
-        const fh = await sectionHandle.getFileHandle(filename, { create: true });
+        const filename = await uniqueFilename(dirHandle, 'Untitled');
+        const fh = await dirHandle.getFileHandle(filename, { create: true });
         await writeFile(fh, '');
 
-        const pagePath = this.activeSection === 'Unfiled'
-            ? filename
-            : `${this.activeSection}/${filename}`;
+        const pagePath = basePath ? `${basePath}/${filename}` : filename;
 
         await this._scanNotebook(nb);
-        this.renderPageList(this.activeSection);
+        this.renderSectionTabs(this.activeNotebookId);    // section tab badges unchanged, but cheap to refresh
+        this.renderSubsectionTabs(this.activeNotebookId); // sub-section row may need to appear
+        this.renderPageList(this.activeSection, this.activeSubsection);
         await this.openPage(pagePath, fh);
 
         // Enter rename mode immediately for the new page
@@ -933,7 +1113,9 @@ const App = {
             }
 
             await this._scanNotebook(nb);
-            this.renderPageList(this.activeSection);
+            this.renderSectionTabs(this.activeNotebookId);
+            this.renderSubsectionTabs(this.activeNotebookId);
+            this.renderPageList(this.activeSection, this.activeSubsection);
             this.scheduleNotebookSessionSave(this.activeNotebookId);
         } catch (e) { this.toast('Rename failed: ' + e.message); }
     },
@@ -961,7 +1143,9 @@ const App = {
                 document.getElementById('welcome').style.display = '';
             }
             await this._scanNotebook(nb);
-            this.renderPageList(this.activeSection);
+            this.renderSectionTabs(this.activeNotebookId);
+            this.renderSubsectionTabs(this.activeNotebookId);
+            this.renderPageList(this.activeSection, this.activeSubsection);
             this.scheduleNotebookSessionSave(this.activeNotebookId);
         } catch (e) { this.toast('Delete failed: ' + e.message); }
     },
@@ -1083,28 +1267,65 @@ const App = {
         el.setAttribute('sections', JSON.stringify(sections));
         el.setAttribute('active-section', this.activeSection || '');
 
-        // Update the page-list panel header
+        // Update the page-list panel header to reflect section + sub-section
         const hdr = document.getElementById('page-list-section-name');
-        if (hdr) hdr.textContent = this.activeSection || '';
+        if (hdr) hdr.textContent = this._pageListHeader(this.activeSection, this.activeSubsection);
     },
 
-    /** Rebuild the <page-list-item> tree for the given section */
-    renderPageList(sectionName) {
+    /** Update the sub-section <section-tabs variant="subsection"> element.
+     *  Only shown when the active section has ≥1 sub-section. The first tab
+     *  is always the "Pages" pseudo-tab (PAGES_PSEUDO_TAB, labelled "Pages")
+     *  which represents the section's direct .md files (activeSubsection=null). */
+    renderSubsectionTabs(notebookId) {
+        const el = document.getElementById('subsection-tabs-el');
+        if (!el) return;
+        const nb = this.notebooks.find(n => n.id === notebookId);
+        if (!nb) { el.style.display = 'none'; return; }
+
+        // Sub-section row is only relevant for real sections (not 'Unfiled')
+        // and only when that section actually has sub-sections.
+        const section = this.activeSection && this.activeSection !== 'Unfiled'
+            ? nb.sections.find(s => s.name === this.activeSection)
+            : null;
+        if (!section || !section.subsections?.length) {
+            el.style.display = 'none';
+            el.setAttribute('sections', '[]');
+            el.setAttribute('active-section', '');
+            return;
+        }
+
+        // Build tab list: pseudo-tab "Pages" + one tab per sub-section.
+        // The pseudo-tab uses a reserved sentinel name (PAGES_PSEUDO_TAB) so
+        // it can never collide with a real sub-section folder name; the
+        // <section-tabs> component displays it as "Pages" via sec.label.
+        const tabs = [
+            { name: PAGES_PSEUDO_TAB, label: 'Pages' },
+            ...section.subsections.map(s => ({ name: s.name }))
+        ];
+        el.style.display = '';
+        el.setAttribute('sections', JSON.stringify(tabs));
+        // When activeSubsection is null, the "Pages" pseudo-tab is the active one.
+        el.setAttribute('active-section', this.activeSubsection || PAGES_PSEUDO_TAB);
+    },
+
+    /** Rebuild the <page-list-item> tree for the given section + sub-section.
+     *  If subsectionName is omitted, falls back to this.activeSubsection. */
+    renderPageList(sectionName, subsectionName) {
         const listEl = document.getElementById('page-list-component');
         const hdr    = document.getElementById('page-list-section-name');
         if (!listEl) return;
 
         listEl.innerHTML = '';
-        if (hdr) hdr.textContent = sectionName || '';
+
+        // Resolve which sub-section to render: explicit arg > activeSubsection > null
+        const subsection = subsectionName !== undefined ? subsectionName : this.activeSubsection;
+        if (hdr) hdr.textContent = this._pageListHeader(sectionName, subsection);
 
         if (!sectionName || !this.activeNotebookId) return;
         const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
         if (!nb) return;
 
-        const pages = sectionName === 'Unfiled'
-            ? nb.unfiledPages
-            : (nb.sections.find(s => s.name === sectionName)?.pages || []);
-
+        const pages = this._getActivePages(nb, sectionName, subsection);
         const expandedSet = new Set(nb.session?.expandedPages || []);
         const items = this._buildPageItems(pages, 0, expandedSet);
         items.forEach(item => listEl.appendChild(item));
@@ -1130,6 +1351,82 @@ const App = {
         });
     },
 
+    // ── Sub-section helpers ──────────────────────────────────────────────────
+    // These centralize the section+subsection logic so callers (rendering,
+    // navigation, search, history, session) all stay consistent.
+
+    /** Page-list panel header text: "Section" or "Section / Subsection". */
+    _pageListHeader(section, subsection) {
+        if (!section) return '';
+        if (subsection) return `${section} / ${subsection}`;
+        return section;
+    },
+
+    /** Composite key used for the per-(section,subsection) "last page" map.
+     *  Returns just the section name when no sub-section is active, which
+     *  preserves backward-compat with old session files. */
+    _subsectionKey(section, subsection) {
+        return subsection ? `${section}/${subsection}` : section;
+    },
+
+    /** Return the PageNode tree to display in the page list for the given
+     *  section + sub-section. For 'Unfiled', returns nb.unfiledPages.
+     *  For a real section with a sub-section, returns that sub-section's pages.
+     *  Otherwise returns the section's direct pages. */
+    _getActivePages(nb, sectionName, subsection) {
+        if (sectionName === 'Unfiled') return nb.unfiledPages;
+        const section = nb.sections.find(s => s.name === sectionName);
+        if (!section) return [];
+        if (subsection) {
+            return section.subsections?.find(s => s.name === subsection)?.pages || [];
+        }
+        return section.pages;
+    },
+
+    /** Resolve which sub-section should be active when entering a section:
+     *  - undefined session entry → default to the first sub-section
+     *  - null session entry      → user previously chose "Pages" (direct pages)
+     *  - a string                → restore that sub-section (if it still exists)
+     *  - section has no sub-sections → always null
+     *  Returns the sub-section name, or null. */
+    _resolveActiveSubsection(nb, sectionName) {
+        const section = nb.sections.find(s => s.name === sectionName);
+        if (!section?.subsections?.length) return null;
+        const stored = nb.session?.sectionLastSubsection?.[sectionName];
+        if (stored === undefined) return section.subsections[0].name;
+        if (stored === null) return null;
+        if (section.subsections.find(s => s.name === stored)) return stored;
+        // Stored sub-section no longer exists (renamed/deleted on disk) — fall
+        // back to the first available sub-section.
+        return section.subsections[0].name;
+    },
+
+    /** Persist the user's last-active sub-section choice for a section, so
+     *  switching away and back restores the same sub-section. Stores null
+     *  explicitly to record the "Pages" pseudo-tab choice. */
+    _rememberLastSubsection(sectionName, subsectionName) {
+        if (!this.activeNotebookId || !sectionName) return;
+        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        if (!nb) return;
+        nb.session = nb.session || {};
+        nb.session.sectionLastSubsection = nb.session.sectionLastSubsection || {};
+        nb.session.sectionLastSubsection[sectionName] = subsectionName;
+    },
+
+    /** Set both activeSection and activeSubsection at once, re-rendering the
+     *  tab rows and page list. Used by link navigation (wikilinks, cento:
+     *  protocol, search results) to jump to a page wherever it lives. */
+    _setActiveSectionAndSubsection(section, subsection) {
+        const sub = subsection || null;
+        if (this.activeSection === section && this.activeSubsection === sub) return;
+        this.activeSection = section;
+        this.activeSubsection = sub;
+        this.renderSectionTabs(this.activeNotebookId);
+        this.renderSubsectionTabs(this.activeNotebookId);
+        this.renderPageList(section, sub);
+        this._rememberLastSubsection(section, sub);
+    },
+
     // ─────────────────────────────────────────────────────────────────────────
     // Sidebar view toggle
     // ─────────────────────────────────────────────────────────────────────────
@@ -1150,8 +1447,14 @@ const App = {
         if (!nb) return;
         this.searchResults = [];
         this.searchRan     = true;
-        for (const section of nb.sections)
+        // Search every page in the notebook: each section's direct pages,
+        // each sub-section's pages, and the unfiled pages at the notebook root.
+        for (const section of nb.sections) {
             await this._searchPages(section.pages, this.searchQuery.toLowerCase());
+            for (const sub of section.subsections || []) {
+                await this._searchPages(sub.pages, this.searchQuery.toLowerCase());
+            }
+        }
         await this._searchPages(nb.unfiledPages, this.searchQuery.toLowerCase());
         this._renderSearchResults();
     },
@@ -1188,7 +1491,15 @@ const App = {
             div.className = 'search-result-item';
             div.innerHTML = `<div class="search-result-title">${escHtml(r.title)}</div>
                              <div class="search-result-context">${r.context}</div>`;
-            div.addEventListener('click', () => this.openPage(r.path, r.handle));
+            // When a search result is clicked, switch the section + sub-section
+            // tabs to where the page lives before opening it, so the user sees
+            // the correct context in the page list and tab rows.
+            div.addEventListener('click', async () => {
+                const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+                const loc = nb ? this._findNoteWithSection(nb, { path: r.path }) : null;
+                if (loc) this._setActiveSectionAndSubsection(loc.section, loc.subsection);
+                await this.openPage(r.path, r.handle);
+            });
             list.appendChild(div);
         }
     },
@@ -1207,8 +1518,9 @@ const App = {
             const result = this._findNoteWithSection(nb, { path: filePath });
             if (result?.node?.handle) {
                 if (nb.id !== this.activeNotebookId) await this.switchToNotebook(nb.id);
-                this.activeSection = result.section;
-                this.renderSectionTabs(nb.id);
+                // Switch section + sub-section to where the target page lives,
+                // so the section/sub-section tabs and page list all sync up.
+                this._setActiveSectionAndSubsection(result.section, result.subsection);
                 await this.openPage(filePath, result.node.handle);
             } else this.toast(`Page not found: ${href}`);
             return;
@@ -1218,16 +1530,14 @@ const App = {
         if (isWiki) {
             const result = this._findNoteWithSection(nb, { title: href });
             if (result?.node?.handle) {
-                this.activeSection = result.section;
-                this.renderSectionTabs(nb.id);
+                this._setActiveSectionAndSubsection(result.section, result.subsection);
                 await this.openPage(result.node.path, result.node.handle);
             } else this.toast(`Page not found: [[${href}]]`);
         } else {
             if (/^https?:\/\//.test(href)) { window.open(href, '_blank'); return; }
             const result = this._findNoteWithSection(nb, { path: href });
             if (result?.node?.handle) {
-                this.activeSection = result.section;
-                this.renderSectionTabs(nb.id);
+                this._setActiveSectionAndSubsection(result.section, result.subsection);
                 await this.openPage(result.node.path, result.node.handle);
             } else this.toast(`Page not found: ${href}`);
         }
@@ -1235,37 +1545,56 @@ const App = {
 
     // ─────────────────────────────────────────────────────────────────────────
     // Node lookup helpers
+    // All three walk both a section's direct pages AND every sub-section's
+    // page tree, so a page can be found no matter which sub-section it lives in.
     // ─────────────────────────────────────────────────────────────────────────
 
     _findPageByPath(nb, path) {
         for (const section of nb.sections) {
             const found = this._walkPages(section.pages, p => p.path === path);
             if (found) return found;
+            for (const sub of section.subsections || []) {
+                const subFound = this._walkPages(sub.pages, p => p.path === path);
+                if (subFound) return subFound;
+            }
         }
         return nb.unfiledPages.find(p => p.path === path) || null;
     },
 
     _findNoteByTitle(nb, title) {
         const low = title.toLowerCase();
+        const pred = p => p.type === 'page' && p.title.toLowerCase() === low;
         for (const section of nb.sections) {
-            const found = this._walkPages(section.pages, p => p.type === 'page' && p.title.toLowerCase() === low);
+            const found = this._walkPages(section.pages, pred);
             if (found) return found;
+            for (const sub of section.subsections || []) {
+                const subFound = this._walkPages(sub.pages, pred);
+                if (subFound) return subFound;
+            }
         }
         return nb.unfiledPages.find(p => p.title.toLowerCase() === low) || null;
     },
 
     /** Like _findNoteByTitle/_findPageByPath, but also returns which section
-     *  (or 'Unfiled') the page lives in, so callers can switch the section
-     *  tab/page-list to match before opening the page. */
+     *  (or 'Unfiled') AND sub-section (or null) the page lives in, so callers
+     *  like wikilink navigation can switch both tab rows to match before
+     *  opening the page. */
     _findNoteWithSection(nb, { title, path } = {}) {
+        const pred = p => p.type === 'page' &&
+            (title ? p.title.toLowerCase() === title.toLowerCase() : p.path === path);
         for (const section of nb.sections) {
-            const found = this._walkPages(section.pages, p =>
-                p.type === 'page' && (title ? p.title.toLowerCase() === title.toLowerCase() : p.path === path));
-            if (found) return { node: found, section: section.name };
+            // Direct pages of the section (subsection = null)
+            const found = this._walkPages(section.pages, pred);
+            if (found) return { node: found, section: section.name, subsection: null };
+            // Pages inside each sub-section
+            for (const sub of section.subsections || []) {
+                const subFound = this._walkPages(sub.pages, pred);
+                if (subFound) return { node: subFound, section: section.name, subsection: sub.name };
+            }
         }
         const unfiled = nb.unfiledPages.find(p =>
             title ? p.title.toLowerCase() === title.toLowerCase() : p.path === path);
-        if (unfiled) return { node: unfiled, section: 'Unfiled' };
+        if (unfiled) return { node: unfiled, section: 'Unfiled', subsection: null };
         return null;
     },
 
@@ -1589,11 +1918,14 @@ const App = {
         const rhr = document.getElementById('resize-right');
         const rpg = document.getElementById('resize-page');
         const st  = document.getElementById('section-tabs-el');
+        const sst = document.getElementById('subsection-tabs-el');
 
         if (ls)  ls.style.width  = this.sidebarWidth + 'px';
 
         // The page-list panel and section tabs are only shown when a
-        // notebook page (not a Drawer file) is the active view.
+        // notebook page (not a Drawer file) is the active view. The sub-section
+        // tabs row collapses the same way so both strips slide up/away together
+        // when the user enters Drawer view.
         const showNotebookChrome = !!this.activeNotebookId && !this.activeIsDrawer;
         if (pl) {
             pl.style.display = '';   // clear any stale inline display:none from older code paths
@@ -1602,6 +1934,7 @@ const App = {
         }
         if (rpg) rpg.classList.toggle('handle-collapsed', !showNotebookChrome);
         if (st)  st.classList.toggle('tabs-collapsed', !showNotebookChrome);
+        if (sst) sst.classList.toggle('tabs-collapsed', !showNotebookChrome);
 
         if (rs)  { rs.style.display  = this.outlineVisible ? '' : 'none'; if (this.outlineVisible) rs.style.width = this.rightSidebarWidth + 'px'; }
         if (rhr) rhr.style.display   = this.outlineVisible ? '' : 'none';
@@ -1620,6 +1953,43 @@ const App = {
             root.setProperty(`--note-size-${role}`,   t.size + 'px');
             root.setProperty(`--note-weight-${role}`, String(t.weight));
         }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Theme  (toggle between 'dark' and 'cream')
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Apply a theme by name. Sets data-theme on <html> (which the [data-theme]
+     *  blocks in looks.css pick up), updates the toggle button's icon so it
+     *  always shows the theme you'd switch TO, and persists the choice to IDB.
+     *  No-op for unknown theme names. */
+    applyTheme(theme) {
+        if (!THEMES.includes(theme)) return;
+        this.activeTheme = theme;
+        document.documentElement.setAttribute('data-theme', theme);
+        this._renderThemeButton();
+        // Persist asynchronously — fire and forget; the toggle feels instant.
+        dbSetTheme(theme).catch(e => console.warn('Cento: could not save theme', e));
+    },
+
+    /** Flip between the two themes. */
+    toggleTheme() {
+        const next = this.activeTheme === 'dark' ? 'cream' : 'dark';
+        this.applyTheme(next);
+    },
+
+    /** Update the theme button's icon + tooltip to reflect the current theme.
+     *  Icon convention: show the icon of the theme you'd switch TO —
+     *  sun when in dark (click → cream/light), moon when in cream (click → dark). */
+    _renderThemeButton() {
+        const btn  = document.getElementById('btn-theme');
+        if (!btn) return;
+        const sun  = btn.querySelector('.svg-sun');
+        const moon = btn.querySelector('.svg-moon');
+        const isDark = this.activeTheme === 'dark';
+        if (sun)  sun.style.display  = isDark ? '' : 'none';
+        if (moon) moon.style.display = isDark ? 'none' : '';
+        btn.dataset.tip = isDark ? 'Switch to Cream Theme' : 'Switch to Dark Theme';
     },
 
     /** Wire up the Settings dialog: role tabs, font grid, size slider,
@@ -1761,13 +2131,13 @@ const App = {
     // Navigation history  (back / forward — in-memory only, clears on reload)
     // ─────────────────────────────────────────────────────────────────────────
 
-    _pushHistory({ notebookId, section, pagePath, handle }) {
+    _pushHistory({ notebookId, section, subsection, pagePath, handle }) {
         // Discard everything after the current index (forward history is stale)
         this._navHistory = this._navHistory.slice(0, this._navIndex + 1);
         // Don't push a duplicate of the current entry
         const curr = this._navHistory[this._navIndex];
         if (curr && curr.pagePath === pagePath && curr.notebookId === notebookId) return;
-        this._navHistory.push({ notebookId, section, pagePath, handle });
+        this._navHistory.push({ notebookId, section, subsection: subsection || null, pagePath, handle });
         if (this._navHistory.length > 50) this._navHistory.shift();
         this._navIndex = this._navHistory.length - 1;
     },
@@ -1797,11 +2167,15 @@ const App = {
             // Switch notebook if needed
             if (entry.notebookId !== this.activeNotebookId)
                 await this.switchToNotebook(entry.notebookId);
-            // Switch section if needed
-            if (entry.section !== this.activeSection) {
+            // Switch section + sub-section if needed (both are part of the
+            // history entry so back/forward restores the exact view).
+            const targetSub = entry.subsection || null;
+            if (entry.section !== this.activeSection || targetSub !== this.activeSubsection) {
                 this.activeSection = entry.section;
+                this.activeSubsection = targetSub;
                 this.renderSectionTabs(entry.notebookId);
-                this.renderPageList(entry.section);
+                this.renderSubsectionTabs(entry.notebookId);
+                this.renderPageList(entry.section, this.activeSubsection);
             }
             await this.openPage(entry.pagePath, entry.handle);
         } finally {
@@ -1811,51 +2185,87 @@ const App = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Default page for section  (called when switching section tabs)
+    // Default page for section/sub-section  (called when switching tabs)
+    // Respects this.activeSubsection — opens the last-active page in the
+    // current (section, sub-section) combo, else the first available page.
     // ─────────────────────────────────────────────────────────────────────────
 
     async _openDefaultPageForSection(sectionName) {
         const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
         if (!nb) return;
 
-        // Try the last page that was active in this section
-        const lastPath = nb.session?.sectionLastPage?.[sectionName];
+        // Pages visible in the page list for the current (section, sub-section)
+        const pages = this._getActivePages(nb, sectionName, this.activeSubsection);
+
+        // Try the last page that was active in this section+sub-section.
+        // The key is "Section" when no sub-section is active, or "Section/Sub".
+        const lastKey  = this._subsectionKey(sectionName, this.activeSubsection);
+        const lastPath = nb.session?.sectionLastPage?.[lastKey];
         if (lastPath) {
             const node = this._findPageByPath(nb, lastPath);
             if (node?.handle) { await this.openPage(lastPath, node.handle); return; }
         }
 
-        // Fall back to the first available page in the section
-        const pages = sectionName === 'Unfiled'
-            ? nb.unfiledPages
-            : (nb.sections.find(s => s.name === sectionName)?.pages || []);
+        // Fall back to the first available page in the current view
         const first = this._walkPages(pages, p => p.type === 'page' && !!p.handle);
         if (first) await this.openPage(first.path, first.handle);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Add section
+    // Add section / sub-section
     // ─────────────────────────────────────────────────────────────────────────
 
     async addSection(sectionName) {
         const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
         if (!nb) return;
-    
+
         // Resolve any name collision by appending a number
         let name = (sectionName || 'Untitled').trim();
         let i = 1;
         while (nb.sections.find(s => s.name === name)) name = `${sectionName} ${i++}`;
-    
+
         try {
             await nb.handle.getDirectoryHandle(name, { create: true });
             await this._scanNotebook(nb);
-            this.activeSection = name;
+            this.activeSection    = name;
+            this.activeSubsection = null;   // brand-new section has no sub-sections yet
             this.renderSectionTabs(this.activeNotebookId);
-            this.renderPageList(name);
+            this.renderSubsectionTabs(this.activeNotebookId);
+            this.renderPageList(name, null);
             this.scheduleNotebookSessionSave(this.activeNotebookId);
             this.newPage();
         } catch (e) {
             this.toast('Could not create section: ' + e.message);
+        }
+    },
+
+    /** Create a new sub-section folder inside the active section, then create
+     *  a first page inside it and switch to it. Mirrors addSection() but one
+     *  level deeper. No-op for the 'Unfiled' pseudo-section (which has no
+     *  real folder to put a sub-section into). */
+    async addSubsection(subsectionName) {
+        if (!this.activeNotebookId || !this.activeSection) return;
+        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        if (!nb) return;
+        const section = nb.sections.find(s => s.name === this.activeSection);
+        if (!section) return;   // can't add a sub-section to 'Unfiled'
+
+        // Resolve name collisions within this section's sub-sections
+        let name = (subsectionName || 'Untitled').trim();
+        let i = 1;
+        while ((section.subsections || []).find(s => s.name === name)) name = `${subsectionName} ${i++}`;
+
+        try {
+            await section.handle.getDirectoryHandle(name, { create: true });
+            await this._scanNotebook(nb);
+            this.activeSubsection = name;
+            this._rememberLastSubsection(this.activeSection, name);
+            this.renderSubsectionTabs(this.activeNotebookId);
+            this.renderPageList(this.activeSection, name);
+            this.scheduleNotebookSessionSave(this.activeNotebookId);
+            this.newPage();   // creates the first page inside the new sub-section
+        } catch (e) {
+            this.toast('Could not create sub-section: ' + e.message);
         }
     },
 

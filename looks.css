@@ -5,317 +5,98 @@
     padding: 0;
 }
 
+/* ── @font-face — variable TTFs (one per family) ─────────────────────────────
+   Each family is a single variable-font TTF downloaded from Google Fonts.
+   One @font-face per family covers the full weight range via font-weight
+   100-900, so the Settings dialog can offer every weight the font supports
+   without a separate file per weight. Italic is declared as a second
+   @font-face only for families where italic is used in the app (Lora).
+   Files live in ./fonts/ — see fonts/README for sources. */
 @font-face {
     font-family: 'DM Sans';
     font-style: normal;
-    font-weight: 300;
-    src: url('./fonts/DM-Sans-300-normal.woff2') format('woff2');
+    font-weight: 100 900;
+    src: url('./fonts/DMSans-VariableFont.ttf') format('truetype-variations');
+    font-display: swap;
 }
 
 @font-face {
-    font-family: 'DM Sans';
+    font-family: 'Inter';
     font-style: normal;
-    font-weight: 400;
-    src: url('./fonts/DM-Sans-400-normal.woff2') format('woff2');
+    font-weight: 100 900;
+    src: url('./fonts/Inter-VariableFont.ttf') format('truetype-variations');
+    font-display: swap;
 }
 
 @font-face {
-    font-family: 'DM Sans';
+    font-family: 'IBM Plex Sans';
     font-style: normal;
-    font-weight: 500;
-    src: url('./fonts/DM-Sans-500-normal.woff2') format('woff2');
+    font-weight: 100 700;
+    src: url('./fonts/IBMPlexSans-VariableFont.ttf') format('truetype-variations');
+    font-display: swap;
 }
 
 @font-face {
-    font-family: 'DM Sans';
+    font-family: 'JetBrains Mono';
     font-style: normal;
-    font-weight: 600;
-    src: url('./fonts/DM-Sans-600-normal.woff2') format('woff2');
-}
-
-@font-face {
-    font-family: 'DM Sans';
-    font-style: normal;
-    font-weight: 700;
-    src: url('./fonts/DMSans-700.ttf') format('truetype');
-}
-
-@font-face {
-    font-family: 'DM Sans';
-    font-style: normal;
-    font-weight: 800;
-    src: url('./fonts/DMSans-800.ttf') format('truetype');
-}
-
-@font-face {
-    font-family: 'DM Sans';
-    font-style: normal;
-    font-weight: 900;
-    src: url('./fonts/DMSans-900.ttf') format('truetype');
+    font-weight: 100 800;
+    src: url('./fonts/JetBrainsMono-VariableFont.ttf') format('truetype-variations');
+    font-display: swap;
 }
 
 @font-face {
     font-family: 'Lora';
     font-style: normal;
-    font-weight: 400;
-    src: url('./fonts/Lora-400-normal.woff2') format('woff2');
+    font-weight: 400 700;
+    src: url('./fonts/Lora-VariableFont.ttf') format('truetype-variations');
+    font-display: swap;
 }
 
+/* Lora italic — separate file so the italic axis is covered. */
 @font-face {
     font-family: 'Lora';
     font-style: italic;
-    font-weight: 400;
-    src: url('./fonts/Lora-400-italic.woff2') format('woff2');
-}
-
-@font-face {
-    font-family: 'Lora';
-    font-style: normal;
-    font-weight: 500;
-    src: url('./fonts/Lora-500.ttf') format('truetype');
-}
-
-@font-face {
-    font-family: 'Lora';
-    font-style: normal;
-    font-weight: 600;
-    src: url('./fonts/Lora-600-normal.woff2') format('woff2');
-}
-
-@font-face {
-    font-family: 'Lora';
-    font-style: normal;
-    font-weight: 700;
-    src: url('./fonts/Lora-700.ttf') format('truetype');
-}
-
-@font-face {
-    font-family: 'JetBrains Mono';
-    font-style: normal;
-    font-weight: 400;
-    src: url('./fonts/JetBrains-Mono-400-normal.woff2') format('woff2');
-}
-
-@font-face {
-    font-family: 'JetBrains Mono';
-    font-style: normal;
-    font-weight: 500;
-    src: url('./fonts/JetBrains-Mono-500-normal.woff2') format('woff2');
-}
-
-@font-face {
-    font-family: 'JetBrains Mono';
-    font-style: normal;
-    font-weight: 300;
-    src: url('./fonts/JetBrainsMono-300.ttf') format('truetype');
-}
-
-@font-face {
-    font-family: 'JetBrains Mono';
-    font-style: normal;
-    font-weight: 600;
-    src: url('./fonts/JetBrainsMono-600.ttf') format('truetype');
-}
-
-@font-face {
-    font-family: 'JetBrains Mono';
-    font-style: normal;
-    font-weight: 700;
-    src: url('./fonts/JetBrainsMono-700.ttf') format('truetype');
-}
-
-@font-face {
-    font-family: 'JetBrains Mono';
-    font-style: normal;
-    font-weight: 800;
-    src: url('./fonts/JetBrainsMono-800.ttf') format('truetype');
-}
-
-/* ── New typography fonts ──────────────────────────────────────────────────── */
-@font-face {
-    font-family: 'Inter';
-    font-style: normal;
-    font-weight: 300;
-    src: url('./fonts/Inter-300.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Inter';
-    font-style: normal;
-    font-weight: 400;
-    src: url('./fonts/Inter-400.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Inter';
-    font-style: normal;
-    font-weight: 500;
-    src: url('./fonts/Inter-500.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Inter';
-    font-style: normal;
-    font-weight: 600;
-    src: url('./fonts/Inter-600.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Inter';
-    font-style: normal;
-    font-weight: 700;
-    src: url('./fonts/Inter-700.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Inter';
-    font-style: normal;
-    font-weight: 800;
-    src: url('./fonts/Inter-800.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Inter';
-    font-style: normal;
-    font-weight: 900;
-    src: url('./fonts/Inter-900.ttf') format('truetype');
-}
-
-@font-face {
-    font-family: 'IBM Plex Sans';
-    font-style: normal;
-    font-weight: 300;
-    src: url('./fonts/IBMPlexSans-300.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'IBM Plex Sans';
-    font-style: normal;
-    font-weight: 400;
-    src: url('./fonts/IBMPlexSans-400.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'IBM Plex Sans';
-    font-style: normal;
-    font-weight: 500;
-    src: url('./fonts/IBMPlexSans-500.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'IBM Plex Sans';
-    font-style: normal;
-    font-weight: 600;
-    src: url('./fonts/IBMPlexSans-600.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'IBM Plex Sans';
-    font-style: normal;
-    font-weight: 700;
-    src: url('./fonts/IBMPlexSans-700.ttf') format('truetype');
+    font-weight: 400 700;
+    src: url('./fonts/Lora-Italic-VariableFont.ttf') format('truetype-variations');
+    font-display: swap;
 }
 
 @font-face {
     font-family: 'Source Serif 4';
     font-style: normal;
-    font-weight: 300;
-    src: url('./fonts/SourceSerif4-300.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Source Serif 4';
-    font-style: normal;
-    font-weight: 400;
-    src: url('./fonts/SourceSerif4-400.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Source Serif 4';
-    font-style: normal;
-    font-weight: 500;
-    src: url('./fonts/SourceSerif4-500.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Source Serif 4';
-    font-style: normal;
-    font-weight: 600;
-    src: url('./fonts/SourceSerif4-600.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Source Serif 4';
-    font-style: normal;
-    font-weight: 700;
-    src: url('./fonts/SourceSerif4-700.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Source Serif 4';
-    font-style: normal;
-    font-weight: 800;
-    src: url('./fonts/SourceSerif4-800.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Source Serif 4';
-    font-style: normal;
-    font-weight: 900;
-    src: url('./fonts/SourceSerif4-900.ttf') format('truetype');
+    font-weight: 200 900;
+    src: url('./fonts/SourceSerif4-VariableFont.ttf') format('truetype-variations');
+    font-display: swap;
 }
 
 @font-face {
     font-family: 'Playfair Display';
     font-style: normal;
-    font-weight: 400;
-    src: url('./fonts/PlayfairDisplay-400.ttf') format('truetype');
+    font-weight: 400 900;
+    src: url('./fonts/PlayfairDisplay-VariableFont.ttf') format('truetype-variations');
+    font-display: swap;
 }
-@font-face {
-    font-family: 'Playfair Display';
-    font-style: normal;
-    font-weight: 500;
-    src: url('./fonts/PlayfairDisplay-500.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Playfair Display';
-    font-style: normal;
-    font-weight: 600;
-    src: url('./fonts/PlayfairDisplay-600.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Playfair Display';
-    font-style: normal;
-    font-weight: 700;
-    src: url('./fonts/PlayfairDisplay-700.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Playfair Display';
-    font-style: normal;
-    font-weight: 800;
-    src: url('./fonts/PlayfairDisplay-800.ttf') format('truetype');
-}
-@font-face {
-    font-family: 'Playfair Display';
-    font-style: normal;
-    font-weight: 900;
-    src: url('./fonts/PlayfairDisplay-900.ttf') format('truetype');
-}
+
+
+/* ── Theme palettes ──────────────────────────────────────────────────────────
+   The app supports two themes, switched by a `data-theme` attribute on <html>:
+     • "dark"  (default) — the original cool-grey palette
+     • "cream" — a warm parchment palette: bg #DBC8A3, text #402700,
+                 complementary #7EB4CD. All other colors are derived from
+                 these three with contrast against the cream background in mind.
+   Only the color vars differ between themes; layout vars (--tab-h, --radius,
+   font stacks, etc.) live in :root and apply to both. */
 
 :root {
-    --bg: #1a1b1e;
-    --bg-sidebar: #16171a;
-    --bg-tab: #1e1f23;
-    --bg-tab-active: #25262b;
-    --bg-hover: #2a2b30;
-    --bg-active: #2e3a4e;
-    --surface: #25262b;
-    --surface2: #2c2d33;
-    --border: #2e2f35;
-    --border-light: #3a3b42;
-    --text: #c9cad4;
-    --text-dim: #6b6d7a;
-    --text-bright: #e8e9f0;
-    --accent: #5b8af0;
-    --accent-dim: #3d5fa8;
-    --accent-glow: rgba(91,138,240,0.15);
-    --green: #4ec9a0;
-    --yellow: #e2c97e;
-    --purple: #c792ea;
-    --ember:  #d88117 ; /* a55b00 */
-    --zotRed: #cc2936; /* #db2c3a */
+    /* Layout & typography vars — shared across both themes */
     --font-ui: 'DM Sans', system-ui, sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
     --font-prose: 'Lora', Georgia, serif;
 
     /* Note typography (Settings-controlled; independent of app UI font) */
     --note-font-body: 'DM Sans', system-ui, sans-serif;
-    --note-size-body: 14px;
-    --note-weight-body: 400;
+    --note-size-body: 12px; /* 14 */
+    --note-weight-body: 300; /* 400 */
     --note-font-h1: 'DM Sans', system-ui, sans-serif;
     --note-size-h1: 27px;
     --note-weight-h1: 600;
@@ -327,10 +108,88 @@
     --note-weight-h3: 600;
     --radius: 6px;
     --tab-h: 38px;
+    --tab-h-sub: 30px;          /* sub-section tabs: slightly shorter than section tabs */
     --toolbar-h: 44px;
     --sidebar-w: 260px;
     --right-sidebar-w: 220px;
     --transition: 140ms ease;
+}
+
+/* Default theme — the original dark cool-grey palette.
+   Applied when data-theme is "dark", missing, or any unrecognized value. */
+:root,
+[data-theme="dark"] {
+    --bg: #1a1b1e;
+    --bg-sidebar: #16171a;
+    --bg-tab: #1e1f23;
+    --bg-tab-active: #25262b;
+    --bg-hover: #2a2b30;
+    --bg-active: #2e3a4e;
+    --surface: #25262b;
+    --surface2: #2c2d33;
+    --border: #2e2f35;
+    --border-light: #3a3b42;
+    --text: #a7a7ae; /* c9cad4 */
+    --text-dim: #6b6d7a;
+    --text-bright: #e8e9f0c0; /* e8e9f0 */
+    --accent: #5b8af0;
+    --accent-dim: #3d5fa8;
+    --accent-glow: rgba(91,138,240,0.15);
+    --green: #4ec9a0;
+    --yellow: #e2c97e;
+    --purple: #c792ea;
+    --ember:  #d88117;
+    --zotRed: #cc2936;
+    --highlight: #e2c97e4d;
+
+    /* Sub-section tab colors — subtly differentiated from section tabs.
+       Slightly darker background, a faint blue tint on the active tab,
+       and dimmer text so the row reads as "one level down". */
+    --bg-tab-sub:        #1c1d20;
+    --bg-tab-sub-active: #23263a;
+    --text-sub:          #8d8f9c;
+    --text-sub-active:   #cdd2e4;
+    --border-sub:        #2a2b32;
+}
+
+/* Cream theme — warm parchment palette derived from the three base colors:
+   bg #DBC8A3, text #402700, complementary #7EB4CD. Every other color is
+   chosen for legible contrast against the cream background. */
+[data-theme="cream"] {
+    --bg: #DBC8A3;             /* the warm cream background */
+    --bg-sidebar: #C9B58E;     /* deeper tan — sidebar reads as recessed */
+    --bg-tab: #CDB990;         /* slightly darker than bg so tabs sit on top */
+    --bg-tab-active: #E8D5AC;  /* lighter cream — active tab "lifts" toward the editor */
+    --bg-hover: #D4BE91;       /* subtle hover on cream */
+    --bg-active: #9BC3D7;      /* tinted complementary — for selected rows */
+    --surface: #D1BD93;        /* panel surface, a touch darker than bg */
+    --surface2: #C5B084;       /* darker surface (second elevation) */
+    --border: #B89A6A;         /* warm brown border, readable on cream */
+    --border-light: #A88858;   /* darker brown for emphasis borders */
+    --text: #402700;           /* the dark-brown text color */
+    --text-dim: #7A5840;       /* muted brown for secondary text */
+    --text-bright: #2A1800;    /* near-black brown for maximum emphasis */
+    --accent: #145975;         /* the complementary blue */
+    --accent-dim: #4E8AA8;     /* darker blue for borders / pressed states */
+    --accent-glow: #14597526;
+
+    /* Status colors retuned for cream — pure yellow/red on cream lose
+       contrast, so they're deepened to mustard / dark-red / plum. */
+    --green: #0d6a0d ;          /* muted forest green, readable on cream */
+    --yellow: #B8862C;         /* amber/mustard — "yellow" on cream */
+    --purple: #8B5A9E;         /* muted plum */
+    --ember:  ##853701;         /* warm orange-brown */
+    --zotRed: #A52A2A;         /* dark brick red */
+    --highlight: #93dcf999;
+
+    /* Sub-section tab colors — one level down from the section tabs.
+       Slightly darker cream + the complementary blue as the active tint,
+       mirroring how the dark theme dims the sub-section row. */
+    --bg-tab-sub:        #C4B085;
+    --bg-tab-sub-active: #E8D5AC; /* 95BCD0 */ 
+    --text-sub:          #6B5230;
+    --text-sub-active:   #6B5230; /* 2A4A5C */
+    --border-sub:        #AB8D5C;
 }
 
 html, body {
@@ -1039,6 +898,11 @@ body {
     padding: 40px 40px !important;
 }
 
+.CodeMirror-line {
+    line-height: 1.75 !important;
+    min-height: 0 !important;
+}
+
 .CodeMirror-cursor {
     border-left: 2px solid var(--accent) !important;
 }
@@ -1062,7 +926,7 @@ body {
 /* Live preview decoration classes */
 .cm-md-hidden {
     opacity: 0 !important;
-    font-size: 1px !important;
+    font-size: 0 !important; /* 1px left unseemly gaps */
     line-height: 0 !important;
 }
 
@@ -1150,7 +1014,7 @@ body {
 }
 
 .cm-md-highlight, mark {
-    background: rgba(226,201,126,0.3);
+    background: var(--highlight);
     border-radius: 2px;
 }
 
@@ -1540,6 +1404,21 @@ section-tabs.tabs-collapsed {
     opacity: 0;
 }
 
+/* Sub-section variant — shorter max-height so its collapse animation
+   matches its smaller row height. */
+section-tabs[variant="subsection"] {
+    max-height: var(--tab-h-sub);
+}
+
+/* Collapsed state must win over the variant's max-height, so we spell it
+   out for the sub-section variant explicitly. (Without this, the equal-
+   specificity variant rule below would override .tabs-collapsed and the
+   sub-section row would not slide away when entering Drawer view.) */
+section-tabs[variant="subsection"].tabs-collapsed {
+    max-height: 0;
+    opacity: 0;
+}
+
 /* Drawer header in the sidebar acts like a notebook entry */
 .drawer-section-header {
     cursor: pointer;
@@ -1873,3 +1752,22 @@ cento-editor {
     background: var(--accent);
 }
 
+
+/* //////  Wry's own rules  ////////////////////////////////// */
+
+notebook-entry {
+    margin: 0.5rem 0 0.5rem 0;
+}
+
+.drawer-section-header {
+    border-bottom: 1px solid var(--border);
+    gap: 4px;
+}
+
+#drawer-list {
+    margin: 0.5rem 0 0.5rem 0;
+}
+
+.cm-s-default .cm-variable-2 {
+    color: var(--text) !important; /* #05a  in codemirror.min.css */
+}

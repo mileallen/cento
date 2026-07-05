@@ -102,9 +102,25 @@
             <!-- Open file: file with arrow-up-from-bracket feel — file + small up-right arrow -->
             <symbol id="icon-file-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
+                <!-- <polyline points="14 2 14 8 20 8"/> Cleaner icon -->
                 <line x1="12" y1="18" x2="12" y2="12"/>
                 <polyline points="9 12 12 9 15 12"/>
+            </symbol>
+            <!-- Sun: used as the theme button icon (toggle to light/cream theme) -->
+            <symbol id="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="4"/>
+                <line x1="12" y1="2"  x2="12" y2="4"/>
+                <line x1="12" y1="20" x2="12" y2="22"/>
+                <line x1="4.93"  y1="4.93"  x2="6.34"  y2="6.34"/>
+                <line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/>
+                <line x1="2"  y1="12" x2="4"  y2="12"/>
+                <line x1="20" y1="12" x2="22" y2="12"/>
+                <line x1="4.93"  y1="19.07" x2="6.34"  y2="17.66"/>
+                <line x1="17.66" y1="6.34"  x2="19.07" y2="4.93"/>
+            </symbol>
+            <!-- Moon: used as the theme button icon (toggle to dark theme) -->
+            <symbol id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
             </symbol>
         </svg>
     </head>
@@ -176,6 +192,14 @@
 
                 <div class="toolbar-sep"></div>
 
+                <!-- Theme toggle: switches data-theme on <html> between
+                     "dark" (default) and "cream". The icon swaps to show
+                     what clicking will switch TO (sun → cream, moon → dark). -->
+                <button class="icon-btn" id="btn-theme" data-tip="Toggle Theme">
+                    <svg class="svg-sun"><use href="#icon-sun"/></svg>
+                    <svg class="svg-moon" style="display:none"><use href="#icon-moon"/></svg>
+                </button>
+
                 <button class="icon-btn" id="btn-settings" data-tip="Settings">
                     <svg><use href="#icon-settings"/></svg>
                 </button>
@@ -234,16 +258,23 @@
                      Populated via setAttribute() from App.renderSectionTabs(). -->
                 <section-tabs id="section-tabs-el" style="display:none"></section-tabs>
 
+                <!-- Sub-section tabs: a second row, structurally identical to the
+                     section tabs row but with variant="subsection" for slightly
+                     smaller height and subtly differentiated colors. Only shown
+                     when the active section contains ≥1 sub-section folder.
+                     Populated via setAttribute() from App.renderSubsectionTabs(). -->
+                <section-tabs id="subsection-tabs-el" variant="subsection" style="display:none"></section-tabs>
+
                 <div id="editor-area">
                     <!-- Welcome screen shown when no notebook/page is open -->
                     <div id="welcome">
-                        <h2>Welcome to Cento</h2>
-                        <p>Open a notebook folder to get started.</p>
+                        <h2>Cento</h2>
+                        <p>A palimpsest of other people's ideas.</p>
                         <div class="btn-row">
                             <button class="open-btn" id="btn-open-notebook-welcome">Open Notebook</button>
                             <button class="open-btn open-btn-secondary" id="btn-open-file-welcome">Open File</button>
                         </div>
-                        <h3>&copy; S Wry MMXXVI</h3>
+                        <div class="search-result-context">&copy; S Wry MMXXVI</div>
                     </div>
 
                     <!-- panes-container holds the <cento-editor> Web Component.

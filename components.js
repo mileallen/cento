@@ -130,11 +130,20 @@ customElements.define('notebook-entry', NotebookEntry);
 // Horizontal scrollable row of section tabs at the top of #main.
 // Attributes : sections       — JSON array of { name } objects
 //              active-section — currently selected section name
-// Fires       : section-change { detail: { section: name } }
+//              variant        — optional; "subsection" renders a second-level
+//                               row with smaller height and subtly different
+//                               colors. Also changes the fired event names:
+//                                 section-change  → subsection-change
+//                                 section-add     → subsection-add
+// Fires       : section-change     { detail: { section: name } }   (default)
+//               section-add        { detail: { name } }            (default)
+//             OR
+//               subsection-change  { detail: { section: name } }   (variant="subsection")
+//               subsection-add     { detail: { name } }            (variant="subsection")
 // ─────────────────────────────────────────────────────────────────────────────
 class SectionTabs extends HTMLElement {
     static get observedAttributes() {
-        return ['sections', 'active-section'];
+        return ['sections', 'active-section', 'variant'];
     }
 
     constructor() {
@@ -224,9 +233,56 @@ class SectionTabs extends HTMLElement {
                 outline: none;
                 width: 90px;
             }
+
+            /* ── Sub-section variant ───────────────────────────────────────────
+               Same structural layout as the section row, but shorter and with
+               subtly differentiated colors so it reads as "one level down".
+               Driven by the host attribute [variant="subsection"], which the
+               app sets on the second <section-tabs> element. */
+            :host([variant="subsection"]) .bar {
+                background: var(--bg-tab-sub);
+                border-bottom-color: var(--border-sub);
+                height: var(--tab-h-sub, 30px);
+            }
+            :host([variant="subsection"]) .tab {
+                height: 26px;
+                padding: 0 14px;
+                font-size: 12px;
+                color: var(--text-sub);
+                border-radius: 5px 5px 0 0;
+            }
+            :host([variant="subsection"]) .tab:hover {
+                background: var(--bg-hover);
+                color: var(--text-sub-active);
+            }
+            :host([variant="subsection"]) .tab.active {
+                background: var(--bg-tab-sub-active);
+                border-color: var(--border-sub);
+                color: var(--text-sub-active);
+            }
+            :host([variant="subsection"]) .tab.active::after {
+                background: var(--bg-tab-sub-active);
+            }
+            :host([variant="subsection"]) .add-section-btn {
+                width: 22px;
+                height: 22px;
+                font-size: 15px;
+                border-radius: 5px;
+            }
+            :host([variant="subsection"]) .new-tab-input {
+                font-size: 12px;
+                width: 80px;
+                padding: 1px 6px;
+            }
         </style>
         <div class="bar" part="bar"></div>`;
     }
+
+    /** Event names depend on variant — callers listen on the host element
+     *  directly, so the names just need to differ between the two rows. */
+    get _changeEvent() { return this.hasAttribute('variant') ? 'subsection-change' : 'section-change'; }
+    get _addEvent()    { return this.hasAttribute('variant') ? 'subsection-add'    : 'section-add'; }
+    get _addLabel()    { return this.hasAttribute('variant') ? 'Add Sub-section'   : 'Add Section'; }
 
     connectedCallback() {
         this._render();
@@ -250,9 +306,12 @@ class SectionTabs extends HTMLElement {
         sections.forEach(sec => {
             const tab = document.createElement('div');
             tab.className = 'tab' + (sec.name === active ? ' active' : '');
-            tab.textContent = sec.name;
+            // sec.label (optional) lets callers display a friendlier label than
+            // sec.name — used by the sub-section row's "Pages" pseudo-tab,
+            // whose real name is the PAGES_PSEUDO_TAB sentinel.
+            tab.textContent = sec.label || sec.name;
             tab.addEventListener('click', () => {
-                this.dispatchEvent(new CustomEvent('section-change',{
+                this.dispatchEvent(new CustomEvent(this._changeEvent,{
                     bubbles: true,
                     composed: true,
                     detail: {
@@ -269,7 +328,7 @@ class SectionTabs extends HTMLElement {
         const addBtn = document.createElement('button');
         addBtn.className = 'add-section-btn';
         addBtn.textContent = '+';
-        addBtn.title = 'Add Section';
+        addBtn.title = this._addLabel;
         addBtn.addEventListener('click', () => this._startAddSection());
         bar.appendChild(addBtn);
     }
@@ -300,7 +359,7 @@ class SectionTabs extends HTMLElement {
             committed = true;
             const name = input.value.trim() || 'Untitled';
             tempTab.remove();
-            this.dispatchEvent(new CustomEvent('section-add',{
+            this.dispatchEvent(new CustomEvent(this._addEvent,{
                 bubbles: true,
                 composed: true,
                 detail: {

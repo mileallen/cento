@@ -2,6 +2,8 @@
 
 Cento is a minimal, offline-first markdown notes app that runs in the browser as a PWA. It combines the best of two tools that approach notes from opposite directions.
 
+( A cento is a [literary work](https://www.poetryfoundation.org/education/glossary/cento) constructed from quotes borrowed from the works of other authors. In all humility, that's what notes and thoughts are. )
+
 ---
 
 <img src="/images/screenshot-2026-06-30.png" width="100%">
@@ -12,7 +14,7 @@ Cento is a minimal, offline-first markdown notes app that runs in the browser as
 
 **Obsidian** got the file format right. Your notes live as plain `.md` files in ordinary folders on your drive — no proprietary database, no lock-in. They are entirely portably and work in any text or markdown editor. Wikilinks let you build a web of connected thoughts. But its interface isn't ideal: a flat file tree scales poorly.
 
-**OneNote** has much better organisation. The Notebooks → Sections → Pages hierarchy maps naturally to how people think in mental classification trees. Also, a spatially structured layout complements memory. Think 'Mind Palaces'.
+**OneNote** has much better organisation. The Notebooks → Sections → Pages hierarchy maps naturally to how people think in mental classification trees. Also, a spatially structured layout aids complements memory. Think 'Mind Palaces'.
 
 **Cento** combines those features. Your notes are plain `.md` files in nested folders — fully portable, fully open. Conversely, you can bring over an existing Obsidian vault and it works out of the box. But the interface is organised like OneNote: open multiple notebooks side by side, navigate between sections as tabs, browse pages in a dedicated sidebar. You get the freedom of plain text and the clarity of a structured interface. It's your digital 2-D mind palace on a screen.
 
@@ -121,6 +123,6 @@ Vanilla JavaScript, [CodeMirror 5](https://codemirror.net/5/), Web Components (c
 
 ## Credits
 
-Cento was built with generous help from Claude Sonnet 4.6, a little advice from Gemini 3.x and some houskeeping tasks by GLM 5.2. Each was recruited to fix parts of the code where the other went off track or did not cooperate. Sach's contribution was primarily combining their work, testing and reporting bugs, researching alternatives to the LLM's first instinct, and fact-checking (e.g. whether a library is outdated or how widely an API is supported).
+Cento was built with generous help from Claude Sonnet 4.6 and GLM 5.2, with a little advice and houskeeping tasks by Gemini 3.x. Each was recruited to fix parts of the code where the other went off track or did not cooperate. Sach's contribution was primarily combining their work, testing and reporting bugs, researching alternatives to the LLM's first instinct, and fact-checking (e.g. whether a library is outdated or how widely an API is supported).
 
 [^*]: When reviewing older notes, I like to see at a glance how many references are web links versus Zotero citations versus internal links. You can modify that line of code to style links for any other app.
