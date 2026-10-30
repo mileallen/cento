@@ -14,9 +14,9 @@ Cento is a minimal, offline-first markdown notes app that runs in the browser as
 
 **Obsidian** got the file format right. Your notes live as plain `.md` files in ordinary folders on your drive — no proprietary database, no lock-in. They are entirely portably and work in any text or markdown editor. Wikilinks let you build a web of connected thoughts. But its interface isn't ideal: a flat file tree scales poorly.
 
-**OneNote** has much better organisation. The Notebooks → Sections → Pages hierarchy maps naturally to how people think in mental classification trees. Also, a spatially structured layout aids complements memory. Think 'Mind Palaces'.
+**OneNote** has much better organisation. The Notebooks → Sections → Pages hierarchy maps naturally to how people think in mental classification trees. Also, a spatially structured layout aids complements memory. Think '[Memory Palaces](https://en.wikipedia.org/wiki/Method_of_loci)'.
 
-**Cento** combines those features. Your notes are plain `.md` files in nested folders — fully portable, fully open. Conversely, you can bring over an existing Obsidian vault and it works out of the box. But the interface is organised like OneNote: open multiple notebooks side by side, navigate between sections as tabs, browse pages in a dedicated sidebar. You get the freedom of plain text and the clarity of a structured interface. It's your digital 2-D mind palace on a screen.
+**Cento** combines those features. Your notes are plain `.md` files in nested folders — fully portable, fully open. Conversely, you can bring over an existing Obsidian vault and it works out of the box. But the interface is organised like OneNote: open multiple notebooks side by side, navigate between sections as tabs, browse pages in a dedicated sidebar. You get the freedom of plain text and the clarity of a structured interface. It's your digital 2-D memory palace on a screen.
 
 ---
 
@@ -53,21 +53,27 @@ Notebook folder/         ← a folder you open as a notebook
 - **Autosave** — notes save automatically as you type
 - **Columns** — split a single note into up to four side-by-side columns (see below)
 - **Outline panel** — a toggleable right sidebar showing the heading structure of the current page, with click-to-jump navigation
-- Syntax: bold, italic, bold+italic, inline code, code blocks, highlight (`==text==`), superscript (`^text^`), subscript (`~text~`), blockquotes, horizontal rules, headings H1–H6, unordered and ordered lists
+- **Markdown Syntax**: The usual — bold, italic, bold+italic, inline code, code blocks, blockquotes, horizontal rules, headings H1–H6, unordered and ordered lists, tables, plus highlight (`==text==`), superscript (`^text^`), subscript (`~text~`)
+- **Footnotes** — Inline in Live Preview, bottom of the page in Preview mode
+- **Maths blocks** — Equations in LaTeX syntax inside $ delimiters (`$$ W_t + C_t $$`), fully rendered in Preview Mode
+- **Code syntax highlight** — For Python and JavaScript ( Preview Mode )
 
 ### Columns
 
-One other thing Obsidian does not offer natively: comparing or composing content side by side within a single document. Again, in service of spatial organization, Cento lets you split any note into up to four columns. The columns are recorded in the `.md` file itself using a simple HTML comment delimiter (`<!column>`) that other markdown renderers silently ignore — so the file degrades gracefully outside Cento.
+One other thing Obsidian does not offer natively: comparing or composing content side by side within a single document. Again, in service of spatial organization, Cento lets you split any note into up to four columns. The columns are recorded in the `.md` file itself using a simple HTML comment delimiter (`
+<!column>
+`) that other markdown renderers silently ignore — so the file degrades gracefully outside Cento.
 
-To add a column: click the `+` column button in the toolbar (splits at the cursor position), or type `<!column>` anywhere in the note and press Enter. To remove the last column: click the `−` column button (content is merged back into the previous column).
+To add a column: click the `+` column button in the toolbar (splits at the cursor position), or type `
+<!column>
+` anywhere in the note and press Enter. To remove the last column: click the `−` column button (content is merged back into the previous column).
 
 ### Navigation
 
 - **Back / Forward** buttons in the toolbar for in-session navigation history
 - `[[Wikilinks]]` navigate between pages in the active notebook
 - **Cento links** — right-click in the editor to copy a `web+cento://` deep link to the current page. Clicking the link from any other app focuses Cento and opens that page directly.
-- Outgoing Markdown links open in a new browser tab
-- Zotero citation links are styled in Zotero's brand colour[^*]
+- As in the screenshot above, links are color coded by type. Outgoing web links are blue. Wikilinks are green. Zotero citation links are styled in Zotero's brand colour[^*]
 
 ### Search
 
@@ -75,7 +81,7 @@ Full-text search across all pages in the active notebook, with inline context sn
 
 ### Drawer
 
-A panel at the bottom of the left sidebar for individually opened `.md` files from outside any notebook — useful for reference files, quick drafts, or anything you want open without it being part of a notebook. Entries can be dismissed with an inline × button. The Drawer is ephemeral and is not persisted between sessions.
+An improvement over both OneNote and Obsidian. A panel at the bottom of the left sidebar for individually opened `.md` files from outside any notebook — useful for external reference files,  READMEs, quick drafts, or anything you want open without it being part of a notebook. Entries can be dismissed with an inline × button. The Drawer is ephemeral and is not persisted between sessions.
 
 When Cento is installed as a PWA, it registers as a handler for `.md` files on Windows, so double-clicking any markdown file in Explorer opens it directly in the Drawer without disturbing your active notebook.
 
@@ -98,11 +104,11 @@ Each notebook stores its own session file (`.cento-notebook.json`) in its root f
 
 ### Simple (bookmark)
 
-Visit [Cento](https://mileallen.github.io/cento) or serve the files from any static HTTP server. Open in Chrome or Edge and bookmark the page. The app runs entirely in the browser — no server, no account, no dependencies.
+Visit [Cento](https://mileallen.github.io/cento) online or, copy this repo locally and open index.html in a browser, and bookmark the page. The app runs entirely in the browser — no online server, no account, no dependencies. All note-taking features work this way but for a more native app experience...
 
 ### Recommended (PWA — native app features)
 
-Open Cento in Chrome or Edge and click **Install app** in the address bar (or right-click the tab). Once installed, Cento appears in the Start Menu and taskbar, launches without a browser window, and registers as the default handler for `.md` files so that double-clicking any markdown file in Explorer opens it in the Drawer.
+Visit Cento online or serve the files via a [local HTTP server](https://docs.python.org/3/library/http.server.html#module-http.server) in Chrome or Edge and click **Install app** in the address bar (or right-click the tab). Once installed, Cento appears in the Start Menu and taskbar, launches without a browser window, and registers as the default handler for `.md` files. (See 'Drawer' above.)
 
 Cento is fully offline-capable. All assets — fonts, scripts, styles — are cached by the service worker on first load. It launches and runs without a network connection.
 
@@ -110,19 +116,19 @@ Cento is fully offline-capable. All assets — fonts, scripts, styles — are ca
 
 ## Stack
 
-Vanilla JavaScript, [CodeMirror 5](https://codemirror.net/5/), Web Components (custom elements with Shadow DOM), IndexedDB for notebook persistence, File System Access API, no framework, no build step.
+Vanilla JavaScript, Web Components (custom elements with Shadow DOM), [CodeMirror 5](https://codemirror.net/5/), [KaTeX](https://katex.org), [Highlight.js](https://highlightjs.org), IndexedDB for notebook persistence, File System Access API, no framework, no build step.
 
 ---
 
 ## Caution
 
 > [!CAUTION]
-> Cento has not been extensively tested. Before switching a large Obsidian vault to it cold turkey, try it for a few days with a backup first.
+> Cento has not been extensively tested. Before switching a large Obsidian vault to it cold turkey, try it for a few days with a backup first. Risk is much lower for a notebook you create in Cento from the ground up.
 
 ---
 
 ## Credits
 
-Cento was built with generous help from Claude Sonnet 4.6 and GLM 5.2, with a little advice and houskeeping tasks by Gemini 3.x. Each was recruited to fix parts of the code where the other went off track or did not cooperate. Sach's contribution was primarily combining their work, testing and reporting bugs, researching alternatives to the LLM's first instinct, and fact-checking (e.g. whether a library is outdated or how widely an API is supported).
+Cento was built with generous help from Claude Sonnet 4.6-5 and GLM 5.2, with a little advice and houskeeping tasks by Gemini 3.x. Each was recruited to fix parts of the code where the other went off track or did not cooperate. Sach's contribution was primarily combining their work, testing and reporting bugs, researching alternatives to the LLM's first instinct, and fact-checking (e.g. whether a library is outdated or how widely an API is supported).
 
 [^*]: When reviewing older notes, I like to see at a glance how many references are web links versus Zotero citations versus internal links. You can modify that line of code to style links for any other app.

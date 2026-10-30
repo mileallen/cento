@@ -4,7 +4,7 @@
 // Bump CACHE_VERSION whenever you deploy updated files.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const CACHE_VERSION = 'cento-v1';
+const CACHE_VERSION = 'cento-v6';
 
 const STATIC_ASSETS = [
     './',
@@ -12,30 +12,60 @@ const STATIC_ASSETS = [
     'looks.css',
     'app.js',
     'components.js',
+    'markdown.js',
     'manifest.json',
     'local/codemirror.min.js',
     'local/codemirror.min.css',
     'local/markdown.min.js',
     'icons/icon-192.png',
     'icons/icon-512.png',
-    'fonts/DM-Sans-300-normal.woff2',
-    'fonts/DM-Sans-400-normal.woff2',
-    'fonts/DM-Sans-500-normal.woff2',
-    'fonts/DM-Sans-600-normal.woff2',
-    'fonts/Inter-300.ttf',
-    'fonts/Inter-400.ttf',
-    'fonts/Lora-400-normal.woff2',
-    'fonts/Lora-400-italic.woff2',
-    'fonts/Lora-600-normal.woff2',
-    'fonts/JetBrains-Mono-400-normal.woff2',
-    'fonts/JetBrains-Mono-500-normal.woff2',
+    'fonts/DMSans-VariableFont.ttf',
+    'fonts/IBMPlexSans-VariableFont.ttf',
+    'fonts/Inter-VariableFont.ttf',
+    'fonts/JetBrainsMono-VariableFont.ttf',
+    'fonts/Lora-Italic-VariableFont.ttf',
+    'fonts/Lora-VariableFont.ttf',
+    'fonts/PlayfairDisplay-VariableFont.ttf',
+    'fonts/SourceSerif4-VariableFont.ttf',
+];
+
+// Maths + code-highlighting libraries. Cached if present, silently skipped if a file is
+// missing (the app still works without them: maths shows as plain code, code is unhighlighted).
+// A missing file here therefore can never break the service-worker install.
+const OPTIONAL_ASSETS = [
+    'local/katex/katex.min.js',
+    'local/katex/katex.min.css',
+    'local/highlightjs/highlight.min.js',
+    'local/katex/fonts/KaTeX_AMS-Regular.woff2',
+    'local/katex/fonts/KaTeX_Caligraphic-Bold.woff2',
+    'local/katex/fonts/KaTeX_Caligraphic-Regular.woff2',
+    'local/katex/fonts/KaTeX_Fraktur-Bold.woff2',
+    'local/katex/fonts/KaTeX_Fraktur-Regular.woff2',
+    'local/katex/fonts/KaTeX_Main-Bold.woff2',
+    'local/katex/fonts/KaTeX_Main-BoldItalic.woff2',
+    'local/katex/fonts/KaTeX_Main-Italic.woff2',
+    'local/katex/fonts/KaTeX_Main-Regular.woff2',
+    'local/katex/fonts/KaTeX_Math-BoldItalic.woff2',
+    'local/katex/fonts/KaTeX_Math-Italic.woff2',
+    'local/katex/fonts/KaTeX_SansSerif-Bold.woff2',
+    'local/katex/fonts/KaTeX_SansSerif-Italic.woff2',
+    'local/katex/fonts/KaTeX_SansSerif-Regular.woff2',
+    'local/katex/fonts/KaTeX_Script-Regular.woff2',
+    'local/katex/fonts/KaTeX_Size1-Regular.woff2',
+    'local/katex/fonts/KaTeX_Size2-Regular.woff2',
+    'local/katex/fonts/KaTeX_Size3-Regular.woff2',
+    'local/katex/fonts/KaTeX_Size4-Regular.woff2',
+    'local/katex/fonts/KaTeX_Typewriter-Regular.woff2',
 ];
 
 // Install: cache everything
 self.addEventListener('install', event => {
     event.waitUntil(
         caches.open(CACHE_VERSION)
-            .then(cache => cache.addAll(STATIC_ASSETS))
+            .then(async cache => {
+                await cache.addAll(STATIC_ASSETS);
+                await Promise.all(OPTIONAL_ASSETS.map(url => cache.add(url).catch(() => {})));
+            })
             .then(() => self.skipWaiting())
     );
 });

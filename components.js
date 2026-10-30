@@ -1013,6 +1013,8 @@ class CentoEditor extends HTMLElement {
         preview.className = 'preview-only-pane active';
         this.appendChild(preview);
 
+        const footnotes = mdNewFootnotes();   // one footnote numbering sequence across all columns
+        let lastContent = null;
         this._cms.forEach( (cm, i) => {
             if (i > 0) {
                 const div = document.createElement('div');
@@ -1022,13 +1024,34 @@ class CentoEditor extends HTMLElement {
             const col = document.createElement('div');
             col.className = 'preview-col-pane';
             // mdToHtml is a global function defined in app.js
-            col.innerHTML = `<div class="preview-content">${mdToHtml(cm.getValue())}</div>`;
+            col.innerHTML = `<div class="preview-content">${mdToHtml(cm.getValue(), footnotes)}</div>`;
             preview.appendChild(col);
+            lastContent = col.firstElementChild;
         }
         );
+        // All footnotes, in order, at the bottom of the last column
+        lastContent?.insertAdjacentHTML('beforeend', mdFootnoteList(footnotes));
 
         // Bubble link clicks up as a custom event so App can handle navigation
         preview.addEventListener('click', e => {
+            // Copy button on rendered code blocks
+            const copyBtn = e.target.closest('.copy-btn');
+            if (copyBtn) {
+                const code = copyBtn.closest('.code-block')?.querySelector('pre code')?.textContent ?? '';
+                navigator.clipboard.writeText(code).then(() => {
+                    copyBtn.classList.add('copied');
+                    setTimeout(() => copyBtn.classList.remove('copied'), 1200);
+                });
+                return;
+            }
+            // Footnote number / back-arrow: scroll within the preview instead of navigating
+            const fnLink = e.target.closest('a.fn-link, a.fn-back');
+            if (fnLink) {
+                e.preventDefault();
+                preview.querySelector('#' + CSS.escape(fnLink.dataset.fn))
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                return;
+            }
             const a = e.target.closest('a');
             if (!a)
                 return;

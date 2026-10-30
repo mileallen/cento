@@ -175,52 +175,12 @@ function escHtml(s) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Markdown → HTML  (used by <cento-editor> in preview mode)
+// The renderer itself (maths, code highlighting, tables, wikilinks …) lives in
+// markdown.js, which must be loaded before this file runs.
 // ─────────────────────────────────────────────────────────────────────────────
-function mdToHtml(md) {
-    const lines = md.split('\n');
-    const out = [];
-    let inCode = false, codeBuf = [];
-
-    for (let i = 0; i < lines.length; i++) {
-        const raw = lines[i];
-        if (raw.startsWith('```')) {
-            if (inCode) { out.push(`<pre><code>${escHtml(codeBuf.join('\n'))}</code></pre>`); codeBuf = []; inCode = false; }
-            else { inCode = true; }
-            continue;
-        }
-        if (inCode) { codeBuf.push(raw); continue; }
-
-        let line = raw
-            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-            .replace(/\*\*\*(.+?)\*\*\*/g,'<strong><em>$1</em></strong>')
-            .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
-            .replace(/\*(.+?)\*/g,'<em>$1</em>')
-            .replace(/_(.+?)_/g,'<em>$1</em>')
-            .replace(/`([^`]+)`/g,'<code>$1</code>')
-            .replace(/==(.+?)==/g,'<mark>$1</mark>')
-            .replace(/\^(.+?)\^/g,'<sup>$1</sup>')
-            .replace(/~(.+?)~/g,'<sub>$1</sub>')
-            .replace(/\[\[([^\]]+)\]\]/g,'<a href="#" class="wikilink" data-target="$1">$1</a>')
-            .replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<a href="$2" target="_blank">$1</a>');
-
-        const hm = raw.match(/^(#{1,6})\s(.*)/);
-        if (hm) { out.push(`<h${hm[1].length}>${line.replace(/^#+\s/,'')}</h${hm[1].length}>`); continue; }
-        if (/^---+$/.test(raw.trim())) { out.push('<hr/>'); continue; }
-        if (raw.startsWith('> ')) { out.push(`<blockquote>${line.slice(5)}</blockquote>`); continue; }
-        if (/^\s*[-*]\s/.test(raw)) { out.push(`<li>${line.replace(/^\s*[-*]\s/,'')}</li>`); continue; }
-        if (/^\d+\.\s/.test(raw)) { out.push(`<li>${line.replace(/^\d+\.\s/,'')}</li>`); continue; }
-        // if (line.trim() === '') { out.push('<p></p>'); continue; }   // replaced below to match Live and Preview
-
-        if (line.trim() === '') {
-            let blanks = 1;
-            while (i + 1 < lines.length && lines[i + 1].trim() === '') { i++; blanks++; }
-            out.push(`<div class="md-vspace" style="height:${blanks * 0.7}em"></div>`);
-            continue;
-        }
-        
-        out.push(`<p>${line}</p>`);
-    }
-    return out.join('\n').replace(/(<li>.*<\/li>\n?)+/g, m => `<ul>${m}</ul>`);
+function mdToHtml(md, footnotes) {
+    // `footnotes` (optional): shared numbering state, so several columns can form one sequence
+    return renderMarkdown(md, footnotes ? { footnotes } : undefined);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -233,16 +193,44 @@ function rebuildDecorations(cm) {
         cm.getAllMarks().forEach(m => m.clear());
         const cursor = cm.getCursor();
         const lineCount = cm.lineCount();
+        const blockState = { fence: null, math: false };   // code/maths block state carried from line to line
         for (let i = 0; i < lineCount; i++)
-            decorateLine(cm, i, cm.getLine(i), i === cursor.line ? cursor.ch : -1);
+            decorateLine(cm, i, cm.getLine(i), i === cursor.line ? cursor.ch : -1, blockState);
     });
 }
 
-function decorateLine(cm, lineNo, text, cursorCh) {
+function decorateLine(cm, lineNo, text, cursorCh, blockState) {
     const mk = (from, to, cls) => cm.markText(
         { line: lineNo, ch: from }, { line: lineNo, ch: to },
         { className: cls, atomic: false }
     );
+
+    // Fenced code and $$ maths: lightly styled source (fully rendered in Preview Mode).
+    // No inline decorations inside them, so *, _ and ^ in code or TeX are left alone.
+    if (blockState) {
+        const fence = text.match(/^\s*(```+|~~~+)/);
+        if (blockState.fence) {
+            if (fence && text.trim().startsWith(blockState.fence)) { blockState.fence = null; mk(0, text.length, 'cm-md-fence'); }
+            else if (text.length) mk(0, text.length, 'cm-md-codeblock');
+            return;
+        }
+        if (fence) { blockState.fence = fence[1]; mk(0, text.length, 'cm-md-fence'); return; }
+        if (blockState.math) {
+            if (text.includes('$$')) blockState.math = false;
+            if (text.length) mk(0, text.length, 'cm-md-math');
+            return;
+        }
+        const mathStart = text.match(/^\s*\$\$(.*)$/);
+        if (mathStart) {
+            const close = mathStart[1].indexOf('$$');
+            if (close < 0 || mathStart[1].slice(close + 2).trim() === '') {   // same rule as markdown.js
+                if (close < 0) blockState.math = true;
+                mk(0, text.length, 'cm-md-math');
+                return;
+            }
+        }
+    }
+
     const hm = text.match(/^(#{1,6}) /);
     if (hm) {
         const level = hm[1].length, prefixLen = level + 1;
@@ -261,11 +249,38 @@ function decorateLine(cm, lineNo, text, cursorCh) {
     applyInline(cm, lineNo, text, cursorCh);
 }
 
-function applyInline(cm, lineNo, text, cursorCh) {
+function applyInline(cm, lineNo, rawText, cursorCh) {
     const mk = (from, to, cls) => cm.markText(
         { line: lineNo, ch: from }, { line: lineNo, ch: to },
         { className: cls, atomic: false }
     );
+    // $inline maths$: styled as source, and masked so the patterns below ignore the TeX.
+    // Same rules as markdown.js: no space just inside the $ signs, closing $ not followed by a digit.
+    const noCode = rawText.replace(/`[^`\n]*`/g, s => ' '.repeat(s.length));   // $ inside `code` isn't maths
+    const mathRe = /(?<![\\$])(?:\$\$[^$\n]+\$\$|\$[^\s$](?:[^$\n]*[^\s$])?\$(?!\d))/g;
+    let text = rawText;
+    for (const mm of noCode.matchAll(mathRe)) {
+        mk(mm.index, mm.index + mm[0].length, 'cm-md-math');
+        text = text.slice(0, mm.index) + ' '.repeat(mm[0].length) + text.slice(mm.index + mm[0].length);
+    }
+    // ^[inline footnotes]: shown inline as a dim italic aside. The "^[" opener is masked so the
+    // ^superscript^ pattern below can't start there. Same bracket-matching rule as markdown.js.
+    const fnScan = text.replace(/`[^`\n]*`/g, s => ' '.repeat(s.length));   // ignore ^[ inside `code`
+    for (let i = 0; i < fnScan.length - 1; i++) {
+        if (fnScan[i] !== '^' || fnScan[i + 1] !== '[') continue;
+        let depth = 0, end = -1;
+        for (let j = i + 1; j < fnScan.length; j++) {
+            const c = fnScan[j];
+            if (c === '\\') { j++; continue; }
+            if (c === '[') depth++;
+            else if (c === ']' && --depth === 0) { end = j; break; }
+        }
+        if (end > i + 2 && fnScan.slice(i + 2, end).trim()) {
+            mk(i, end + 1, 'cm-md-footnote');
+            text = text.slice(0, i) + '  ' + text.slice(i + 2);
+            i = end;
+        }
+    }
     applyPattern(text, /(\*\*\*)(.+?)(\*\*\*)/g,             cursorCh, mk, 'cm-md-syntax', 'cm-md-bold cm-md-italic', 'cm-md-syntax');
     applyPattern(text, /(\*\*)([^*\n]+?)(\*\*)/g,            cursorCh, mk, 'cm-md-syntax', 'cm-md-bold',              'cm-md-syntax');
     applyPattern(text, /(?<!\*)\*(?!\*)([^*\n]+?)\*/g,       cursorCh, mk, 'cm-md-syntax', 'cm-md-italic',            'cm-md-syntax', true);
