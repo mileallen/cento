@@ -37,7 +37,7 @@ Notebook folder/         ← a folder you open as a notebook
   Loose note.md          ← appears in a virtual "Unfiled" section
 ```
 
-- **Notebooks** — any folder on your drive. Multiple notebooks can be open simultaneously; they appear in the left sidebar and are seamlessly restored on next launch (no re-picking required).
+- **Notebooks** — any folder on your drive.  (As a browser-based app, it will ask for permission to access the folder). Multiple notebooks can be open simultaneously; they appear in the left sidebar and are seamlessly restored on next launch (no re-picking required).
 - **Sections** — top-level subfolders, shown as horizontal tabs across the top of the editor. Click the `+` button at the right edge of the tab strip to add a new section.
 - **Pages** — `.md` files inside sections, listed in the right-hand panel. Pages can have sub-pages: a file named `Topic.md` paired with a folder named `Topic/` creates a parent page with children inside.
 - **Unfiled** — a virtual section that collects any `.md` files sitting directly in the notebook's root folder.
@@ -57,15 +57,16 @@ Notebook folder/         ← a folder you open as a notebook
 - **Footnotes** — Inline in Live Preview, bottom of the page in Preview mode
 - **Maths blocks** — Equations in LaTeX syntax inside $ delimiters (`$$ W_t + C_t $$`), fully rendered in Preview Mode
 - **Code syntax highlight** — For Python and JavaScript ( Preview Mode )
+- **Settings** — offer a wide menu of fonts, sizes and weights
 
 ### Columns
 
 One other thing Obsidian does not offer natively: comparing or composing content side by side within a single document. Again, in service of spatial organization, Cento lets you split any note into up to four columns. The columns are recorded in the `.md` file itself using a simple HTML comment delimiter (`
-<!column>
+< !column>
 `) that other markdown renderers silently ignore — so the file degrades gracefully outside Cento.
 
 To add a column: click the `+` column button in the toolbar (splits at the cursor position), or type `
-<!column>
+< !column>
 ` anywhere in the note and press Enter. To remove the last column: click the `−` column button (content is merged back into the previous column).
 
 ### Navigation
@@ -73,7 +74,7 @@ To add a column: click the `+` column button in the toolbar (splits at the curso
 - **Back / Forward** buttons in the toolbar for in-session navigation history
 - `[[Wikilinks]]` navigate between pages in the active notebook
 - **Cento links** — right-click in the editor to copy a `web+cento://` deep link to the current page. Clicking the link from any other app focuses Cento and opens that page directly.
-- As in the screenshot above, links are color coded by type. Outgoing web links are blue. Wikilinks are green. Zotero citation links are styled in Zotero's brand colour[^*]
+- As in the screenshot above, links are color coded by type. Outgoing web links are blue. Wikilinks are green. Zotero citation links are styled in Zotero's brand colour[^*] (For security, Obsidian is only other app for which protocol links are treated as links that launch the app.)
 
 ### Search
 
@@ -87,7 +88,7 @@ When Cento is installed as a PWA, it registers as a handler for `.md` files on W
 
 ### Session
 
-Each notebook stores its own session file (`.cento-notebook.json`) in its root folder, tracking the last-active section, last-active page per section, scroll and cursor positions, sidebar widths, and outline visibility. Everything is restored exactly where you left off on next launch.
+Each notebook stores its own session file (`.cento-notebook.json`) in its root folder, tracking the last-active section, last-active page per section, scroll and cursor positions, sidebar widths, and outline visibility. Everything is restored exactly where you left off on next launch. (Previously open notebooks are listed in the sidebar, but may require you to reauthorize access when you click them once.)
 
 ---
 
@@ -104,13 +105,19 @@ Each notebook stores its own session file (`.cento-notebook.json`) in its root f
 
 ### Simple (bookmark)
 
-Visit [Cento](https://mileallen.github.io/cento) online or, copy this repo locally and open index.html in a browser, and bookmark the page. The app runs entirely in the browser — no online server, no account, no dependencies. All note-taking features work this way but for a more native app experience...
+Visit [Cento](https://mileallen.github.io/cento) online or, get a copy of this repo from the [releases](https://github.com/mileallen/cento/releases) page, open `index.html` in a (Chrome-based) browser, and bookmark the page. Cento is not compatible with Firefox. The app runs entirely in the browser — no online server, no account, no dependencies. All note-taking features work this way but for a more native app experience...
 
 ### Recommended (PWA — native app features)
 
-Visit Cento online or serve the files via a [local HTTP server](https://docs.python.org/3/library/http.server.html#module-http.server) in Chrome or Edge and click **Install app** in the address bar (or right-click the tab). Once installed, Cento appears in the Start Menu and taskbar, launches without a browser window, and registers as the default handler for `.md` files. (See 'Drawer' above.)
+Visit [Cento](https://mileallen.github.io/cento) online or serve the files via a [local HTTP server](https://docs.python.org/3/library/http.server.html#module-http.server) (see Tip below) in Chrome or Edge and click **Install app** in the address bar (or right-click the tab). 
+
+Once installed, Cento appears in the Start Menu and taskbar, launches without a browser window, and registers as the default handler for `.md` files. (See 'Drawer' above.)
 
 Cento is fully offline-capable. All assets — fonts, scripts, styles — are cached by the service worker on first load. It launches and runs without a network connection.
+
+>[!Tip]
+> Directions for the HTTP server on the [releases](https://github.com/mileallen/cento/releases) page.
+
 
 ---
 
@@ -123,7 +130,7 @@ Vanilla JavaScript, Web Components (custom elements with Shadow DOM), [CodeMirro
 ## Caution
 
 > [!CAUTION]
-> Cento has not been extensively tested. Before switching a large Obsidian vault to it cold turkey, try it for a few days with a backup first. Risk is much lower for a notebook you create in Cento from the ground up.
+> Cento has not been extensively tested. Before switching a large Obsidian vault to it cold turkey, try it for a few days with a backup first. Risk is much lower for a notebook you create in Cento from the ground up. (Click 'New Notebook', pick an empty folder.)
 
 ---
 

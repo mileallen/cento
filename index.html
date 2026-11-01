@@ -14,23 +14,14 @@
         <script src="./local/katex/katex.min.js"></script>
         <script src="./local/highlightjs/highlight.min.js"></script>
         <script src="./markdown.js"></script>
-        <!-- app.js must load before components.js: it defines mdToHtml,
-             rebuildDecorations and the App object that components.js uses. -->
+        <!-- app.js must load before components.js: it defines rebuildDecorations
+             and the App object that components.js uses. -->
         <script src="./app.js"></script>
         <script src="./components.js"></script>
         <link rel="manifest" href="./manifest.json"/>
 
         <!-- SVG Sprite — all icons referenced via <use href="#icon-…"> -->
         <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
-            <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="9 18 15 12 9 6"/>
-            </symbol>
-            <symbol id="icon-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6 9 12 15 18 9"/>
-            </symbol>
-            <symbol id="icon-folder-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-            </symbol>
             <symbol id="icon-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <circle cx="11" cy="11" r="8"/>
                 <line x1="21" y1="21" x2="16.65" y2="16.65"/>
@@ -296,8 +287,8 @@
                     <!-- panes-container holds the <cento-editor> Web Component.
                          The component manages its own .editor-pane and
                          .preview-only-pane children internally. -->
-                    <div id="panes-container" style="position:absolute;inset:0;pointer-events:none;">
-                        <cento-editor id="editor" style="display:none;position:absolute;inset:0;pointer-events:auto;"></cento-editor>
+                    <div id="panes-container">
+                        <cento-editor id="editor" style="display:none"></cento-editor>
                     </div>
                 </div>
             </div><!-- /#main -->

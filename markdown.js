@@ -11,7 +11,7 @@
  *
  * ── Changes made for Cento (search for "CENTO" to find every one) ─────────────
  *  1. Cento rules in mdInline(): [[wikilinks]], ==highlight==, ^sup^, ~sub~,
- *     plus zotero:// and relative-path links (in addition to http/https).
+ *     plus zotero://, obsidian:// and relative-path links (in addition to http/https).
  *  2. Links: the whole <a> opening tag is lifted out before bold/italic run, so
  *     underscores or asterisks in a URL (or in target="_blank") can't be turned
  *     into <em>/<strong> and corrupt the HTML.
@@ -163,14 +163,17 @@ function mdInline(s, fn) {
         s = escapeHtml(s);
 
         // ── CENTO RULES (2/3): links ─────────────────────────────────────────────
-        // Allowed: http(s)://, zotero://, and relative paths (no scheme at all).
+        // Allowed: http(s)://, zotero://, obsidian://, and relative paths (no scheme at all).
         // Anything else (javascript:, data:, file: ...) is left as plain text.
         // The opening tag is lifted out so URL characters can't trigger emphasis rules.
         s = s.replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (whole, text, url) => {
             url = url.trim();
-            const ok = url !== "" && (
-                /^https?:\/\/\S+$/i.test(url) ||
-                /^zotero:\/\/\S+$/i.test(url) ||
+            // Allow-list: exactly http, https, zotero and obsidian links, or a scheme-less relative path.
+            // Any other scheme (javascript:, data:, file:, logseq://, …) stays plain text. Control
+            // characters are refused outright: browsers silently drop tabs/newlines inside a URL,
+            // so "java<tab>script:…" would otherwise slip past the scheme test as a "relative" path.
+            const ok = url !== "" && !/[\x00-\x1f\x7f]/.test(url) && (
+                /^(?:https?|zotero|obsidian):\/\/\S+$/i.test(url) ||
                 !/^[a-z][a-z0-9+.-]*:/i.test(url)
             );
             if (!ok) return whole;

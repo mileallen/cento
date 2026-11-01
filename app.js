@@ -12,6 +12,34 @@ const NOTEBOOK_SESSION    = '.cento-notebook.json';
 const AUTOSAVE_MS         = 1500;
 const SESSION_MS          = 1000;
 
+// Element lookup, cached: the shell's elements are never replaced, so each id is looked up once.
+const _els = new Map();
+const $ = id => {
+    let el = _els.get(id);
+    if (!el && (el = document.getElementById(id))) _els.set(id, el);
+    return el;
+};
+
+// Small shared helpers
+const byName    = (a, b) => a.name.localeCompare(b.name);
+const byTitle   = (a, b) => a.title.localeCompare(b.title);
+const joinPath  = (base, name) => (base ? `${base}/${name}` : name);
+const parentPath = p => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+/** Copy text; falls back to the browser's own copy command if the clipboard API refuses. */
+const copyText  = text => navigator.clipboard.writeText(text).catch(() => document.execCommand('copy'));
+
+/** Links that open ANOTHER APP: an explicit allow-list of exactly these two schemes. (http/https
+ *  open in a browser tab and relative paths open notes; every other scheme is never opened.) */
+const APP_LINK_RE = /^(?:zotero|obsidian):\/\/[^\s\x00-\x1f\x7f]+$/i;
+
+/** Hand a URL to whichever app registered its protocol; the browser asks the user to confirm. */
+function openExternalApp(url) {
+    const a = Object.assign(document.createElement('a'), { href: url, rel: 'noopener noreferrer' });
+    document.body.appendChild(a);   // attached, so every browser honours the click
+    a.click();
+    a.remove();
+}
+
 // Reserved name for the "direct pages" pseudo-tab that appears as the first
 // tab in the sub-section tabs row. Clicking it sets activeSubsection = null
 // (i.e. the page list shows the section's direct .md files). Using a reserved
@@ -53,8 +81,10 @@ const TYPOGRAPHY_DEFAULTS = {
 // ─────────────────────────────────────────────────────────────────────────────
 // IndexedDB  — two stores: 'notebooks' (all open notebooks) + 'app-state'
 // ─────────────────────────────────────────────────────────────────────────────
+// One connection, opened on first use and reused (it used to be reopened for every call).
+let _db = null;
 function openDB() {
-    return new Promise((res, rej) => {
+    return _db ??= new Promise((res, rej) => {
         const r = indexedDB.open(DB_NAME, DB_VERSION);
         r.onupgradeneeded = e => {
             const db = e.target.result;
@@ -63,83 +93,36 @@ function openDB() {
             if (!db.objectStoreNames.contains(STATE_STORE))
                 db.createObjectStore(STATE_STORE);
         };
-        r.onsuccess = e => res(e.target.result);
-        r.onerror   = e => rej(e.target.error);
+        r.onsuccess = e => {
+            const db = e.target.result;
+            db.onversionchange = () => { db.close(); _db = null; };   // let another tab upgrade the schema
+            res(db);
+        };
+        r.onerror = e => { _db = null; rej(e.target.error); };
     });
 }
 
-async function dbGetAllNotebooks() {
+/** Run one request against a store and resolve with its result once the transaction commits. */
+async function idb(store, mode, run) {
     const db = await openDB();
     return new Promise((res, rej) => {
-        const r = db.transaction(NOTEBOOK_STORE, 'readonly')
-                    .objectStore(NOTEBOOK_STORE).getAll();
-        r.onsuccess = () => res(r.result);
-        r.onerror   = () => rej(r.error);
+        const tx  = db.transaction(store, mode);
+        const req = run(tx.objectStore(store));
+        tx.oncomplete = () => res(req?.result);
+        tx.onerror = tx.onabort = e => rej(e.target.error || tx.error);
     });
 }
 
-async function dbAddNotebook(name, handle) {
-    const db = await openDB();
-    return new Promise((res, rej) => {
-        const tx = db.transaction(NOTEBOOK_STORE, 'readwrite');
-        const r  = tx.objectStore(NOTEBOOK_STORE).add({ name, handle });
-        r.onsuccess = () => res(r.result); // returns auto-generated id
-        tx.onerror  = () => rej(tx.error);
-    });
-}
+const dbGetAllNotebooks   = ()             => idb(NOTEBOOK_STORE, 'readonly',  st => st.getAll());
+const dbAddNotebook       = (name, handle) => idb(NOTEBOOK_STORE, 'readwrite', st => st.add({ name, handle }));   // → the new id
+const dbRemoveNotebook    = id             => idb(NOTEBOOK_STORE, 'readwrite', st => st.delete(id));
+const dbSetActiveNotebook = id             => idb(STATE_STORE,    'readwrite', st => st.put({ activeNotebookId: id }, 'global'));
+const dbGetAppState       = async ()       => (await idb(STATE_STORE, 'readonly', st => st.get('global'))) || {};
 
-async function dbRemoveNotebook(id) {
-    const db = await openDB();
-    return new Promise((res, rej) => {
-        const tx = db.transaction(NOTEBOOK_STORE, 'readwrite');
-        tx.objectStore(NOTEBOOK_STORE).delete(id);
-        tx.oncomplete = res;
-        tx.onerror    = () => rej(tx.error);
-    });
-}
-
-async function dbSetActiveNotebook(id) {
-    const db = await openDB();
-    return new Promise((res, rej) => {
-        const tx = db.transaction(STATE_STORE, 'readwrite');
-        tx.objectStore(STATE_STORE).put({ activeNotebookId: id }, 'global');
-        tx.oncomplete = res;
-        tx.onerror    = () => rej(tx.error);
-    });
-}
-
-async function dbGetAppState() {
-    const db = await openDB();
-    return new Promise((res, rej) => {
-        const r = db.transaction(STATE_STORE, 'readonly')
-                    .objectStore(STATE_STORE).get('global');
-        r.onsuccess = () => res(r.result || {});
-        r.onerror   = () => rej(r.error);
-    });
-}
-
-/** Persist the active theme ('dark' | 'cream') under its own key in the
- *  app-state store. Separate from 'global' so a future schema change to
- *  the global state object can't clobber the theme preference. */
-async function dbSetTheme(theme) {
-    const db = await openDB();
-    return new Promise((res, rej) => {
-        const tx = db.transaction(STATE_STORE, 'readwrite');
-        tx.objectStore(STATE_STORE).put(theme, 'theme');
-        tx.oncomplete = res;
-        tx.onerror    = () => rej(tx.error);
-    });
-}
-
-async function dbGetTheme() {
-    const db = await openDB();
-    return new Promise((res, rej) => {
-        const r = db.transaction(STATE_STORE, 'readonly')
-                    .objectStore(STATE_STORE).get('theme');
-        r.onsuccess = () => res(r.result || null);
-        r.onerror   = () => rej(r.error);
-    });
-}
+/** The active theme ('dark' | 'cream') lives under its own key, separate from 'global',
+ *  so a future change to the global state object can't clobber it. */
+const dbSetTheme          = theme          => idb(STATE_STORE,    'readwrite', st => st.put(theme, 'theme'));
+const dbGetTheme          = async ()       => (await idb(STATE_STORE, 'readonly', st => st.get('theme'))) || null;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // File system helpers
@@ -246,20 +229,17 @@ async function uniqueFilename(dirHandle, base = 'Untitled') {
     return name;
 }
 
-function escHtml(s) {
-    return String(s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Markdown → HTML  (used by <cento-editor> in preview mode)
-// The renderer itself (maths, code highlighting, tables, wikilinks …) lives in
-// markdown.js, which must be loaded before this file runs.
-// ─────────────────────────────────────────────────────────────────────────────
-function mdToHtml(md, footnotes) {
-    // `footnotes` (optional): shared numbering state, so several columns can form one sequence
-    return renderMarkdown(md, footnotes ? { footnotes } : undefined);
+/** HTML for `text` with each case-insensitive occurrence of `query` wrapped in <mark>.
+ *  `query` is matched literally (so "c++" or "(x" are fine), and every piece is escaped
+ *  on its own, so a search for "amp" can never cut into an &amp; entity. */
+function highlightMatches(text, query) {
+    const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    let out = '', last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+        out += escapeHtml(text.slice(last, m.index)) + '<mark>' + escapeHtml(m[0]) + '</mark>';
+        last = m.index + m[0].length;
+    }
+    return out + escapeHtml(text.slice(last));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -278,11 +258,14 @@ function rebuildDecorations(cm) {
     });
 }
 
+/** Returns mk(from, to, cls): marks a character range on one line. */
+const lineMarker = (cm, lineNo) => (from, to, cls) => cm.markText(
+    { line: lineNo, ch: from }, { line: lineNo, ch: to },
+    { className: cls, atomic: false }
+);
+
 function decorateLine(cm, lineNo, text, cursorCh, blockState) {
-    const mk = (from, to, cls) => cm.markText(
-        { line: lineNo, ch: from }, { line: lineNo, ch: to },
-        { className: cls, atomic: false }
-    );
+    const mk = lineMarker(cm, lineNo);
 
     // Fenced code and $$ maths: lightly styled source (fully rendered in Preview Mode).
     // No inline decorations inside them, so *, _ and ^ in code or TeX are left alone.
@@ -329,10 +312,7 @@ function decorateLine(cm, lineNo, text, cursorCh, blockState) {
 }
 
 function applyInline(cm, lineNo, rawText, cursorCh) {
-    const mk = (from, to, cls) => cm.markText(
-        { line: lineNo, ch: from }, { line: lineNo, ch: to },
-        { className: cls, atomic: false }
-    );
+    const mk = lineMarker(cm, lineNo);
     // $inline maths$: styled as source, and masked so the patterns below ignore the TeX.
     // Same rules as markdown.js: no space just inside the $ signs, closing $ not followed by a digit.
     const noCode = rawText.replace(/`[^`\n]*`/g, s => ' '.repeat(s.length));   // $ inside `code` isn't maths
@@ -368,27 +348,21 @@ function applyInline(cm, lineNo, rawText, cursorCh) {
     applyPattern(text, /(==)(.+?)(==)/g,                     cursorCh, mk, 'cm-md-syntax', 'cm-md-highlight',         'cm-md-syntax');
     applyPattern(text, /(\^)(.+?)(\^)/g,                     cursorCh, mk, 'cm-md-syntax', 'cm-md-superscript',       'cm-md-syntax');
     applyPattern(text, /(~)(.+?)(~)/g,                       cursorCh, mk, 'cm-md-syntax', 'cm-md-subscript',         'cm-md-syntax');
+    applyBracketed(text, /\[\[([^\]]+)\]\]/g,                           2, 'cm-md-wikilink',    cursorCh, mk);
+    applyBracketed(text, /\[([^\]]+)\]\((zotero:\/\/[^)]+)\)/g,           1, 'cm-md-zotero-link', cursorCh, mk);
+    applyBracketed(text, /\[([^\]]+)\]\(((?!zotero:\/\/)[^)]+)\)/g,       1, 'cm-md-link',        cursorCh, mk);
+}
+
+/** [[wikilinks]], [text](zotero://…) and [text](url): show the whole source while the cursor
+ *  is inside, otherwise hide the brackets/URL and show only the text (match group 1).
+ *  openLen = length of the opening bracket(s). */
+function applyBracketed(text, re, openLen, cls, cursorCh, mk) {
     let m;
-    const wikiRe = /\[\[([^\]]+)\]\]/g;
-    while ((m = wikiRe.exec(text)) !== null) {
-        const start = m.index, end = m.index + m[0].length;
-        const inRange = cursorCh >= start && cursorCh <= end;
-        if (inRange) { mk(start, end, 'cm-md-wikilink'); }
-        else { mk(start, start+2, 'cm-md-hidden'); mk(start+2, start+2+m[1].length, 'cm-md-wikilink'); mk(start+2+m[1].length, end, 'cm-md-hidden'); }
-    }
-    const zotRe = /\[([^\]]+)\]\((zotero:\/\/[^)]+)\)/g;
-    while ((m = zotRe.exec(text)) !== null) {
-        const start = m.index, end = m.index + m[0].length;
-        const inRange = cursorCh >= start && cursorCh <= end;
-        if (inRange) { mk(start, end, 'cm-md-zotero-link'); }
-        else { mk(start, start+1, 'cm-md-hidden'); mk(start+1, start+1+m[1].length, 'cm-md-zotero-link'); mk(start+1+m[1].length, end, 'cm-md-hidden'); }
-    }
-    const linkRe = /\[([^\]]+)\]\(((?!zotero:\/\/)[^)]+)\)/g;
-    while ((m = linkRe.exec(text)) !== null) {
-        const start = m.index, end = m.index + m[0].length;
-        const inRange = cursorCh >= start && cursorCh <= end;
-        if (inRange) { mk(start, end, 'cm-md-link'); }
-        else { mk(start, start+1, 'cm-md-hidden'); mk(start+1, start+1+m[1].length, 'cm-md-link'); mk(start+1+m[1].length, end, 'cm-md-hidden'); }
+    while ((m = re.exec(text)) !== null) {
+        const start = m.index, end = start + m[0].length;
+        const cs = start + openLen, ce = cs + m[1].length;
+        if (cursorCh >= start && cursorCh <= end) mk(start, end, cls);
+        else { mk(start, cs, 'cm-md-hidden'); mk(cs, ce, cls); mk(ce, end, 'cm-md-hidden'); }
     }
 }
 
@@ -443,9 +417,8 @@ const App = {
     searchResults:    [],
     searchRan:        false,
     saveStatus:       '',
-    renamingPath:     null,
     activeTheme:      'dark',  // 'dark' | 'cream' — applied as data-theme on <html>
-    typography:       JSON.parse(JSON.stringify(TYPOGRAPHY_DEFAULTS)), // current notebook's font settings
+    typography:       structuredClone(TYPOGRAPHY_DEFAULTS), // current notebook's font settings
 
     // ── Internals ──────────────────────────────────────────────────────────────
     _sessionTimers:   {},   // one debounce timer per notebook id
@@ -455,73 +428,66 @@ const App = {
     _navIndex:        -1,   // current position in _navHistory
     _navigating:      false,// true while executing a back/forward jump (suppress push)
     _ctxNode:         null,
-    _ctxKind:         null,
     _ctxTab:          null,   // { level: 'section' | 'subsection', name } while the menu is open on a tab
     _moveNode:        null,   // page being moved by the Move to Section dialog
     _moveDest:        null,   // destination picked in that dialog
     _settingsDraft:   null,   // working copy of typography edited inside the Settings dialog
 
+    get activeNotebook() { return this.notebooks.find(n => n.id === this.activeNotebookId); },
+
+    /** The notebook's saved-session object (created on first use). */
+    _session(nb) { return nb.session ??= {}; },
+
+    /** Show the editor (a page is open) or the welcome screen (nothing is). */
+    _showEditor(on) {
+        $('editor').style.display  = on ? '' : 'none';
+        $('welcome').style.display = on ? 'none' : '';
+    },
+
     // ─────────────────────────────────────────────────────────────────────────
     // Boot
     // ─────────────────────────────────────────────────────────────────────────
     init() {
-        const ed = () => document.getElementById('editor');
+        const ed = () => $('editor');
 
-        // ── Toolbar buttons ──────────────────────────────────────────────────
-        document.getElementById('btn-open-notebook')
-            .addEventListener('click', () => this.openNotebook());
-        document.getElementById('btn-open-notebook-welcome')
-            .addEventListener('click', () => this.openNotebook());
-        document.getElementById('btn-open-file')
-            .addEventListener('click', () => this.openFileInDrawer());
-        document.getElementById('btn-open-file-welcome')
-            .addEventListener('click', () => this.openFileInDrawer());
-        document.getElementById('btn-new-notebook')
-            ?.addEventListener('click', () => this.newNotebook());
-        document.getElementById('btn-new-notebook-welcome')
-            ?.addEventListener('click', () => this.newNotebook());
-        document.getElementById('btn-new-page')
-            .addEventListener('click', () => this.newPage());
-        document.getElementById('btn-sidebar-notebooks')
-            .addEventListener('click', () => this.setSidebarView('notebooks'));
-        document.getElementById('btn-sidebar-search')
-            .addEventListener('click', () => {
-                this.setSidebarView('search');
-                document.getElementById('search-input').focus();
-            });
-        document.getElementById('btn-toggle-preview')
-            .addEventListener('click', () => this.toggleEditorMode());
-        document.getElementById('btn-add-column')
-            .addEventListener('click', () => ed()?.addColumn());
-        document.getElementById('btn-remove-column')
-            .addEventListener('click', () => ed()?.removeColumn());
-        document.getElementById('btn-toggle-outline')
-            .addEventListener('click', () => this.toggleOutline());
-        document.getElementById('btn-save')
-            .addEventListener('click', () => this.saveActivePage());
-        document.getElementById('btn-nav-back')
-            .addEventListener('click', () => this.navBack());
-        document.getElementById('btn-nav-forward')
-            .addEventListener('click', () => this.navForward());
-        document.getElementById('btn-theme')
-            .addEventListener('click', () => this.toggleTheme());
+        // ── Toolbar and welcome-screen buttons ───────────────────────────────
+        const clicks = {
+            'btn-open-notebook':         () => this.openNotebook(),
+            'btn-open-notebook-welcome': () => this.openNotebook(),
+            'btn-open-file':             () => this.openFileInDrawer(),
+            'btn-open-file-welcome':     () => this.openFileInDrawer(),
+            'btn-new-notebook':          () => this.newNotebook(),
+            'btn-new-notebook-welcome':  () => this.newNotebook(),
+            'btn-new-page':              () => this.newPage(),
+            'btn-sidebar-notebooks':     () => this.setSidebarView('notebooks'),
+            'btn-sidebar-search':        () => { this.setSidebarView('search'); $('search-input').focus(); },
+            'btn-toggle-preview':        () => this.toggleEditorMode(),
+            'btn-add-column':            () => ed()?.addColumn(),
+            'btn-remove-column':         () => ed()?.removeColumn(),
+            'btn-toggle-outline':        () => this.toggleOutline(),
+            'btn-save':                  () => this.saveActivePage(),
+            'btn-nav-back':              () => this.navBack(),
+            'btn-nav-forward':           () => this.navForward(),
+            'btn-theme':                 () => this.toggleTheme(),
+            'btn-search-go':             () => this.runSearch(),
+        };
+        for (const [id, fn] of Object.entries(clicks)) $(id).addEventListener('click', fn);
 
         // ── Search ───────────────────────────────────────────────────────────
-        document.getElementById('btn-search-go')
-            .addEventListener('click', () => this.runSearch());
-        const searchInput = document.getElementById('search-input');
+        const searchInput = $('search-input');
         searchInput.addEventListener('keydown', e => { if (e.key === 'Enter') this.runSearch(); });
         searchInput.addEventListener('input', e => { this.searchQuery = e.target.value; });
 
         // ── Global keyboard ──────────────────────────────────────────────────
         window.addEventListener('keydown', e => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); this.saveActivePage(); }
+            // toLowerCase: with Caps Lock on, e.key is 'S'
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); this.saveActivePage(); }
         });
 
         // ── Section tabs (custom element events) ─────────────────────────────
-        const sectionTabsEl = document.getElementById('section-tabs-el');
+        const sectionTabsEl = $('section-tabs-el');
         sectionTabsEl.addEventListener('section-change', e => {
-            const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+            const nb = this.activeNotebook;
             this.activeSection = e.detail.section;
             // Resolve the active sub-section for the newly-selected section:
             // restore the last-active sub-section from session, or default to
@@ -541,7 +507,7 @@ const App = {
         // it fires subsection-change / subsection-add instead of section-*.
         // The first tab is always the "Pages" pseudo-tab (PAGES_PSEUDO_TAB)
         // which represents the section's direct .md files (activeSubsection=null).
-        const subsectionTabsEl = document.getElementById('subsection-tabs-el');
+        const subsectionTabsEl = $('subsection-tabs-el');
         subsectionTabsEl.addEventListener('subsection-change', e => {
             const clicked = e.detail.section;
             this.activeSubsection = (clicked === PAGES_PSEUDO_TAB) ? null : clicked;
@@ -566,24 +532,24 @@ const App = {
         subsectionTabsEl.addEventListener('tab-rename', e => this.renameTab('subsection', e.detail.oldName, e.detail.newName));
 
         // ── Page list (custom element events) ────────────────────────────────
-        const pageListEl = document.getElementById('page-list-component');
+        const pageListEl = $('page-list-component');
         pageListEl.addEventListener('page-select', async e => {
-            const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+            const nb = this.activeNotebook;
             if (!nb) return;
             const node = this._findPageByPath(nb, e.detail.path);
             if (node?.handle) await this.openPage(e.detail.path, node.handle);
         });
         pageListEl.addEventListener('item-toggle', e => {
-            const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+            const nb = this.activeNotebook;
             if (!nb) return;
-            nb.session = nb.session || {};
-            const set = new Set(nb.session.expandedPages || []);
+            const session = this._session(nb);
+            const set = new Set(session.expandedPages || []);
             e.detail.expanded ? set.add(e.detail.path) : set.delete(e.detail.path);
-            nb.session.expandedPages = [...set];
+            session.expandedPages = [...set];
             this.scheduleNotebookSessionSave(this.activeNotebookId);
         });
         pageListEl.addEventListener('page-contextmenu', e => {
-            const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+            const nb = this.activeNotebook;
             if (!nb) return;
             const node = this._findPageByPath(nb, e.detail.path);
             if (!node) return;
@@ -594,11 +560,11 @@ const App = {
         });
 
         // ── Notebook list (custom element events) ────────────────────────────
-        document.getElementById('notebook-list')
+        $('notebook-list')
             .addEventListener('notebook-activate', e => {
                 this.switchToNotebook(Number(e.detail.id));
             });
-        document.getElementById('notebook-list')
+        $('notebook-list')
             .addEventListener('notebook-close', async e => {
                 await this.closeNotebook(Number(e.detail.id));
             });
@@ -606,7 +572,6 @@ const App = {
         // ── <cento-editor> events ─────────────────────────────────────────────
         document.addEventListener('content-change', () => {
             this.activePageDirty = true;
-            this._renderToolbar();
             this.scheduleAutoSave();
         });
         document.addEventListener('cursor-change', () => {
@@ -615,21 +580,18 @@ const App = {
                 this._outlineTimer = setTimeout(() => this._renderOutline(), 300);
             }
         });
-        document.addEventListener('column-count-change', e => {
-            this._renderToolbar();
-        });
+        document.addEventListener('column-count-change', () => this._renderToolbar());
         document.addEventListener('max-columns-reached', () => {
             this.toast('Maximum of 4 columns reached.');
         });
         document.addEventListener('link-click', e => {
             this.handleLinkClick({ href: e.detail.href, isWiki: e.detail.isWiki });
         });
-        document.addEventListener('save-request', () => this.saveActivePage());
 
         // ── Link clicks in the editor (live mode, wikilinks/md links) ─────────
-        document.getElementById('panes-container')
+        $('panes-container')
             .addEventListener('click', e => {
-                const el = e.target.closest('.cm-md-link, .cm-md-wikilink');
+                const el = e.target.closest('.cm-md-link, .cm-md-zotero-link, .cm-md-wikilink');
                 if (!el) return;
                 e.preventDefault();
                 const cm = ed()?.getActiveCm();
@@ -651,24 +613,24 @@ const App = {
             if (e.target.closest('.CodeMirror, .preview-only-pane'))
                 this._showContextMenu(e, { kind: 'editor' });
         });
-        document.getElementById('ctx-rename').addEventListener('click', () => {
+        $('ctx-rename').addEventListener('click', () => {
             const node = this._ctxNode, tab = this._ctxTab; this._hideContextMenu();
             if (tab) { this._startTabRename(tab); return; }
             if (!node) return;
             // Set the renaming attribute on the matching <page-list-item>
             const item = document.querySelector(`page-list-item[page-path="${CSS.escape(node.path)}"]`);
-            if (item) { this._renameCommitted = false; item.setAttribute('renaming', ''); }
+            item?.setAttribute('renaming', '');
         });
-        document.getElementById('ctx-delete').addEventListener('click', () => {
+        $('ctx-delete').addEventListener('click', () => {
             const node = this._ctxNode, tab = this._ctxTab; this._hideContextMenu();
             if (tab) this.deleteTab(tab);
             else if (node) this.deleteNode(node);
         });
-        document.getElementById('ctx-move')?.addEventListener('click', () => {
+        $('ctx-move')?.addEventListener('click', () => {
             const node = this._ctxNode; this._hideContextMenu();
             if (node) this.openMoveDialog(node);
         });
-        document.getElementById('context-menu').addEventListener('click', e => {
+        $('context-menu').addEventListener('click', e => {
             const item = e.target.closest('.ctx-editor-item');
             if (!item || item.dataset.disabled === 'true') return;
             this._hideContextMenu();
@@ -681,9 +643,9 @@ const App = {
         document.addEventListener('keydown', e => { if (e.key === 'Escape') this._hideContextMenu(); });
 
         // ── Panel resize handles ───────────────────────────────────────────────
-        this._initResizeDrag(document.getElementById('resize-left'),  'left');
-        this._initResizeDrag(document.getElementById('resize-page'),  'page');
-        this._initResizeDrag(document.getElementById('resize-right'), 'right');
+        this._initResizeDrag($('resize-left'),  'left');
+        this._initResizeDrag($('resize-page'),  'page');
+        this._initResizeDrag($('resize-right'), 'right');
         this._applyWidths();
 
         // ── Drawer header click — switches the view back to the Drawer ────────
@@ -814,12 +776,11 @@ const App = {
             this.activePageHandle = null;
             this.activeIsDrawer   = false;
             // Clear the editor and show the welcome screen
-            document.getElementById('editor').style.display = 'none';
-            document.getElementById('welcome').style.display = '';
-            document.getElementById('section-tabs-el').style.display = 'none';
-            document.getElementById('subsection-tabs-el').style.display = 'none';
-            document.getElementById('page-list-panel').style.display = 'none';
-            document.getElementById('page-list-component').innerHTML = '';
+            this._showEditor(false);
+            $('section-tabs-el').style.display = 'none';
+            $('subsection-tabs-el').style.display = 'none';
+            $('page-list-panel').style.display = 'none';
+            $('page-list-component').innerHTML = '';
 
             // Switch to another open notebook if one exists
             const next = this.notebooks.find(n => !n.needsPermission);
@@ -900,21 +861,30 @@ const App = {
     // sub-sections and inside page-paired directories) via _scanPageLevel.
     // ─────────────────────────────────────────────────────────────────────────
 
-    async _scanNotebook(nb) {
-        const sections = [], unfiledPages = [];
-        for await (const [name, entry] of nb.handle.entries()) {
-            if (name.startsWith('.') || name === NOTEBOOK_SESSION) continue;
-            if (entry.kind === 'directory') {
-                const { pages, subsections } = await this._scanSectionTopLevel(entry, name);
-                sections.push({ name, handle: entry, path: name, pages, subsections });
-            } else if (name.endsWith('.md')) {
-                unfiledPages.push({ name, title: name.replace(/\.md$/, ''), path: name, handle: entry, type: 'page', children: [] });
-            }
+    /** One directory level: its .md files and its sub-folders (dot-names skipped), in listing order. */
+    async _readDir(dir) {
+        const files = [], dirs = [];
+        for await (const [name, entry] of dir.entries()) {
+            if (name.startsWith('.')) continue;   // includes the .cento-notebook.json session file
+            if (entry.kind === 'directory') dirs.push([name, entry]);
+            else if (name.endsWith('.md'))  files.push([name, entry]);
         }
-        sections.sort((a, b) => a.name.localeCompare(b.name));
-        unfiledPages.sort((a, b) => a.name.localeCompare(b.name));
-        nb.sections     = sections;
-        nb.unfiledPages = unfiledPages;
+        return { files, dirs };
+    },
+
+    _makePage(name, path, handle, children = []) {
+        return { name, title: name.replace(/\.md$/, ''), path, handle, type: 'page', children };
+    },
+
+    async _scanNotebook(nb) {
+        const { files, dirs } = await this._readDir(nb.handle);
+        const sections = [];
+        for (const [name, entry] of dirs) {
+            const { pages, subsections } = await this._scanSectionTopLevel(entry, name);
+            sections.push({ name, handle: entry, path: name, pages, subsections });
+        }
+        nb.sections     = sections.sort(byName);
+        nb.unfiledPages = files.map(([name, fh]) => this._makePage(name, name, fh)).sort(byName);
     },
 
     /**
@@ -924,36 +894,14 @@ const App = {
      * directory pattern DOES apply at deeper levels).
      */
     async _scanSectionTopLevel(sectionHandle, sectionPath) {
-        const files = {}, dirs = {};
-        for await (const [name, entry] of sectionHandle.entries()) {
-            if (name.startsWith('.')) continue;
-            if (entry.kind === 'directory') dirs[name]  = entry;
-            else if (name.endsWith('.md'))  files[name] = entry;
-        }
-
-        // Direct pages — .md files sitting at the section's top level.
-        // They have no paired children here because any folder at this level
-        // is a sub-section, not a paired directory.
-        const pages = [];
-        for (const [fileName, fh] of Object.entries(files)) {
-            const title    = fileName.replace(/\.md$/, '');
-            const pagePath = `${sectionPath}/${fileName}`;
-            pages.push({ name: fileName, title, path: pagePath, handle: fh, type: 'page', children: [] });
-        }
-        pages.sort((a, b) => a.title.localeCompare(b.title));
-
-        // Sub-sections — every directory at the section's top level.
-        // Each is scanned with _scanPageLevel, so the existing paired-directory
-        // pattern continues to work for nested page hierarchies inside them.
+        const { files, dirs } = await this._readDir(sectionHandle);
+        const pages = files.map(([name, fh]) => this._makePage(name, `${sectionPath}/${name}`, fh)).sort(byTitle);
         const subsections = [];
-        for (const [dirName, dh] of Object.entries(dirs)) {
-            const subPath = `${sectionPath}/${dirName}`;
-            const subPages = await this._scanPageLevel(dh, subPath);
-            subsections.push({ name: dirName, handle: dh, path: subPath, pages: subPages });
+        for (const [name, dh] of dirs) {
+            const path = `${sectionPath}/${name}`;
+            subsections.push({ name, handle: dh, path, pages: await this._scanPageLevel(dh, path) });
         }
-        subsections.sort((a, b) => a.name.localeCompare(b.name));
-
-        return { pages, subsections };
+        return { pages, subsections: subsections.sort(byName) };
     },
 
     /**
@@ -963,31 +911,23 @@ const App = {
      * An unpaired directory becomes a non-clickable group header.
      */
     async _scanPageLevel(dirHandle, basePath) {
-        const files = {}, dirs = {};
-        for await (const [name, entry] of dirHandle.entries()) {
-            if (name.startsWith('.')) continue;
-            if (entry.kind === 'directory') dirs[name]  = entry;
-            else if (name.endsWith('.md'))  files[name] = entry;
-        }
-        const pages = [], paired = new Set();
-        for (const [fileName, fh] of Object.entries(files)) {
-            const title    = fileName.replace(/\.md$/, '');
-            const pagePath = basePath ? `${basePath}/${fileName}` : fileName;
-            if (dirs[title]) {
+        const { files, dirs } = await this._readDir(dirHandle);
+        const dirByName = new Map(dirs), paired = new Set(), pages = [];
+        for (const [fileName, fh] of files) {
+            const title = fileName.replace(/\.md$/, '');
+            let children = [];
+            if (dirByName.has(title)) {
                 paired.add(title);
-                const children = await this._scanPageLevel(dirs[title], basePath ? `${basePath}/${title}` : title);
-                pages.push({ name: fileName, title, path: pagePath, handle: fh, type: 'page', children });
-            } else {
-                pages.push({ name: fileName, title, path: pagePath, handle: fh, type: 'page', children: [] });
+                children = await this._scanPageLevel(dirByName.get(title), joinPath(basePath, title));
             }
+            pages.push(this._makePage(fileName, joinPath(basePath, fileName), fh, children));
         }
-        for (const [dirName, dh] of Object.entries(dirs)) {
+        for (const [dirName, dh] of dirs) {
             if (paired.has(dirName)) continue;
-            const children = await this._scanPageLevel(dh, basePath ? `${basePath}/${dirName}` : dirName);
+            const children = await this._scanPageLevel(dh, joinPath(basePath, dirName));
             pages.push({ name: dirName, title: dirName, path: null, handle: null, type: 'group', children });
         }
-        pages.sort((a, b) => a.title.localeCompare(b.title));
-        return pages;
+        return pages.sort(byTitle);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1000,7 +940,7 @@ const App = {
 
         // If no columnsData was supplied, try the notebook session
         if (!columnsData.length && this.activeNotebookId) {
-            const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+            const nb = this.activeNotebook;
             const stored = nb?.session?.pageStates?.[pagePath]?.columns;
             if (stored) columnsData = stored;
         }
@@ -1016,11 +956,9 @@ const App = {
         // this preserves backward-compat with old sessions that only used
         // the section name as the key.
         if (this.activeNotebookId && this.activeSection) {
-            const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+            const nb = this.activeNotebook;
             if (nb) {
-                nb.session = nb.session || {};
-                nb.session.sectionLastPage = nb.session.sectionLastPage || {};
-                nb.session.sectionLastPage[this._subsectionKey(this.activeSection, this.activeSubsection)] = pagePath;
+                (this._session(nb).sectionLastPage ??= {})[this._subsectionKey(this.activeSection, this.activeSubsection)] = pagePath;
             }
         }
 
@@ -1034,9 +972,8 @@ const App = {
             });
         }
 
-        const editorEl = document.getElementById('editor');
-        editorEl.style.display = '';
-        document.getElementById('welcome').style.display = 'none';
+        const editorEl = $('editor');
+        this._showEditor(true);
 
         editorEl.editorMode = this.editorMode;
         editorEl.load(content, columnsData);
@@ -1065,12 +1002,8 @@ const App = {
         if (s.outlineVisible !== undefined) this.outlineVisible = s.outlineVisible;
 
         // Typography is per-notebook; fall back to defaults for any role not stored.
-        this.typography = {
-            body: { ...TYPOGRAPHY_DEFAULTS.body, ...(s.typography?.body || {}) },
-            h1:   { ...TYPOGRAPHY_DEFAULTS.h1,   ...(s.typography?.h1   || {}) },
-            h2:   { ...TYPOGRAPHY_DEFAULTS.h2,   ...(s.typography?.h2   || {}) },
-            h3:   { ...TYPOGRAPHY_DEFAULTS.h3,   ...(s.typography?.h3   || {}) },
-        };
+        this.typography = Object.fromEntries(Object.entries(TYPOGRAPHY_DEFAULTS)
+            .map(([role, defaults]) => [role, { ...defaults, ...(s.typography?.[role] || {}) }]));
         this._applyTypography();
         this._applyWidths();
     },
@@ -1080,11 +1013,9 @@ const App = {
         if (!nb || nb.needsPermission) return;
 
         // Snapshot current page's editor state into pageStates
-        const editorEl = document.getElementById('editor');
+        const editorEl = $('editor');
         if (this.activePage && editorEl && !this.activeIsDrawer) {
-            nb.session                              = nb.session || {};
-            nb.session.pageStates                   = nb.session.pageStates || {};
-            nb.session.pageStates[this.activePage]  = { columns: editorEl.getColumnsState() };
+            (this._session(nb).pageStates ??= {})[this.activePage] = { columns: editorEl.getColumnsState() };
         }
 
         const session = {
@@ -1126,7 +1057,7 @@ const App = {
 
     async saveActivePage() {
         const handle = this.activePageHandle;
-        const editorEl = document.getElementById('editor');
+        const editorEl = $('editor');
         if (!handle || !editorEl) return;
 
         this.saveStatus = 'saving';
@@ -1154,7 +1085,7 @@ const App = {
 
     async newPage() {
         if (!this.activeNotebookId || !this.activeSection) return;
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
 
         // Resolve the directory where the new page should be created:
@@ -1187,16 +1118,13 @@ const App = {
 
         const pagePath = basePath ? `${basePath}/${filename}` : filename;
 
-        await this._scanNotebook(nb);
-        this.renderSectionTabs(this.activeNotebookId);    // section tab badges unchanged, but cheap to refresh
-        this.renderSubsectionTabs(this.activeNotebookId); // sub-section row may need to appear
-        this.renderPageList(this.activeSection, this.activeSubsection);
+        await this._refreshAfterFsChange(nb);
         await this.openPage(pagePath, fh);
 
         // Enter rename mode immediately for the new page
         await new Promise(r => setTimeout(r, 50));
         const item = document.querySelector(`page-list-item[page-path="${CSS.escape(pagePath)}"]`);
-        if (item) { this._renameCommitted = false; item.setAttribute('renaming', ''); }
+        item?.setAttribute('renaming', '');
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1205,38 +1133,43 @@ const App = {
 
     async commitRename(pagePath, newTitle) {
         if (!newTitle?.trim()) return;
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
 
         const node = this._findPageByPath(nb, pagePath);
         if (!node?.handle) return;
 
-        const newName = newTitle.trim().replace(/\.md$/, '') + '.md';
+        const newName  = newTitle.trim().replace(/\.md$/, '') + '.md';
         if (newName === node.name) return;
+        const newBase  = newName.replace(/\.md$/, '');
 
-        const parentPath = pagePath.includes('/') ? pagePath.substring(0, pagePath.lastIndexOf('/')) : '';
+        const parent = parentPath(pagePath);
         try {
-            const dirHandle = parentPath ? await resolveDir(nb.handle, parentPath) : nb.handle;
+            const dirHandle = parent ? await resolveDir(nb.handle, parent) : nb.handle;
             try { await dirHandle.getFileHandle(newName); this.toast('A file with that name already exists.'); return; } catch {}
 
+            // A page with sub-pages is Foo.md + Foo/ : the folder has to follow the rename,
+            // otherwise the sub-pages would turn into an unrelated group.
+            const paired = await this._pairedDir(nb, node);
+            if (paired && await entryExists(dirHandle, newBase)) { this.toast('A folder with that name already exists.'); return; }
+
+            await this._flushActivePage();   // unsaved edits reach the file before it is copied
             const content = await readFile(node.handle);
             const newFh   = await dirHandle.getFileHandle(newName, { create: true });
             await writeFile(newFh, content);
             await dirHandle.removeEntry(node.name);
 
-            const newPath = parentPath ? `${parentPath}/${newName}` : newName;
-
-            // Update active page reference if this was the open page
-            if (this.activePage === pagePath) {
-                this.activePage       = newPath;
-                this.activePageHandle = newFh;
+            let folderMoved = false;
+            if (paired) {
+                try { await renameDirectory(dirHandle, node.title, newBase); folderMoved = true; }
+                catch (e) { this.toast('The page was renamed, but its sub-pages folder could not be: ' + e.message, 6000); }
             }
 
-            await this._scanNotebook(nb);
-            this.renderSectionTabs(this.activeNotebookId);
-            this.renderSubsectionTabs(this.activeNotebookId);
-            this.renderPageList(this.activeSection, this.activeSubsection);
-            this.scheduleNotebookSessionSave(this.activeNotebookId);
+            // Point every saved reference (open page, history, session) at the new names
+            const prefix  = joinPath(parent, '');
+            this._remapNotebookPaths(nb, pagePath, prefix + newName, { sameTab: true });
+            if (folderMoved) this._remapNotebookPaths(nb, pagePath.replace(/\.md$/, ''), prefix + newBase, { sameTab: true });
+            await this._refreshAfterFsChange(nb);   // also re-resolves the open page's file handle
         } catch (e) { this.toast('Rename failed: ' + e.message); }
     },
 
@@ -1245,29 +1178,29 @@ const App = {
     // ─────────────────────────────────────────────────────────────────────────
 
     async deleteNode(node) {
-        const label = node.type === 'folder' ? `folder "${node.name}" and all its contents` : `"${node.name}"`;
-        if (!await this._confirm(`Permanently delete ${label}?`)) return;
+        if (!await this._confirm(`Permanently delete "${node.name}"?`)) return;
 
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
 
-        const parentPath = node.path?.includes('/') ? node.path.substring(0, node.path.lastIndexOf('/')) : '';
+        const parent     = parentPath(node.path || '');
+        const hadActive  = !!this.activePage && !this.activeIsDrawer && this.activePage === node.path;
+        if (hadActive) clearTimeout(this._saveTimer);   // a pending autosave must not target the deleted file
         try {
-            const dirHandle = parentPath ? await resolveDir(nb.handle, parentPath) : nb.handle;
+            const dirHandle = parent ? await resolveDir(nb.handle, parent) : nb.handle;
             await dirHandle.removeEntry(node.name, { recursive: true });
+        } catch (e) { this.toast('Delete failed: ' + e.message); return; }
 
-            if (this.activePage === node.path) {
-                this.activePage       = null;
-                this.activePageHandle = null;
-                document.getElementById('editor').style.display = 'none';
-                document.getElementById('welcome').style.display = '';
-            }
-            await this._scanNotebook(nb);
-            this.renderSectionTabs(this.activeNotebookId);
-            this.renderSubsectionTabs(this.activeNotebookId);
-            this.renderPageList(this.activeSection, this.activeSubsection);
-            this.scheduleNotebookSessionSave(this.activeNotebookId);
-        } catch (e) { this.toast('Delete failed: ' + e.message); }
+        this._forgetPaths(nb, node.path);   // saved editor state, expanded pages, last-page-per-tab
+        this._dropHistory(nb, node.path);   // Back/Forward must not point at a file that is gone
+        if (hadActive) {
+            this.activePage       = null;
+            this.activePageHandle = null;
+            this.activePageDirty  = false;
+            this._showEditor(false);
+        }
+        await this._refreshAfterFsChange(nb);
+        this._renderToolbar();
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1276,7 +1209,7 @@ const App = {
 
     toggleEditorMode() {
         this.editorMode = this.editorMode === 'live' ? 'preview' : 'live';
-        const ed = document.getElementById('editor');
+        const ed = $('editor');
         if (ed) ed.editorMode = this.editorMode;
         this._renderToolbar();
         this.scheduleNotebookSessionSave(this.activeNotebookId);
@@ -1289,30 +1222,30 @@ const App = {
     _renderToolbar() {
         const hasNotebook = !!this.activeNotebookId;
         const hasPage     = !!this.activePageHandle;
-        const editorEl    = document.getElementById('editor');
+        const editorEl    = $('editor');
         const colCount    = editorEl ? editorEl.getColumnCount() : 0;
 
-        document.getElementById('btn-new-page').disabled = !hasNotebook || !this.activeSection;
+        $('btn-new-page').disabled = !hasNotebook || !this.activeSection;
         this._renderNavButtons();
 
         // Toolbar-right buttons: only visible when a page is open
         const show = el => { if (el) el.style.display = hasPage ? '' : 'none'; };
         ['btn-toggle-preview', 'btn-save', 'btn-toggle-outline',
          'btn-add-column', 'btn-remove-column']
-            .forEach(id => show(document.getElementById(id)));
+            .forEach(id => show($(id)));
 
         if (hasPage) {
             const isPreview = this.editorMode === 'preview';
-            const btnPrev   = document.getElementById('btn-toggle-preview');
+            const btnPrev   = $('btn-toggle-preview');
             btnPrev.classList.toggle('active', isPreview);
             btnPrev.dataset.tip = isPreview ? 'Live Preview' : 'Preview Mode';
             btnPrev.querySelector('.svg-eye').style.display  = isPreview ? 'none' : '';
             btnPrev.querySelector('.svg-edit').style.display = isPreview ? ''     : 'none';
 
-            document.getElementById('btn-toggle-outline').classList.toggle('active', this.outlineVisible);
+            $('btn-toggle-outline').classList.toggle('active', this.outlineVisible);
 
-            const btnAdd = document.getElementById('btn-add-column');
-            const btnRem = document.getElementById('btn-remove-column');
+            const btnAdd = $('btn-add-column');
+            const btnRem = $('btn-remove-column');
             btnAdd.disabled = colCount >= 4;
             btnRem.disabled = colCount <= 1;
             btnAdd.dataset.tip = colCount >= 4 ? 'Max 4 columns' : `Add Column (${colCount}/4)`;
@@ -1321,7 +1254,7 @@ const App = {
     },
 
     _renderSaveStatus() {
-        const el = document.getElementById('save-indicator');
+        const el = $('save-indicator');
         el.className  = this.saveStatus;
         el.textContent = this.saveStatus === 'saving' ? 'saving…'
                        : this.saveStatus === 'saved'  ? 'saved' : '';
@@ -1329,16 +1262,16 @@ const App = {
 
     _renderSidebar() {
         const isNB = this.sidebarView === 'notebooks';
-        document.getElementById('panel-notebooks').style.display = isNB  ? '' : 'none';
-        document.getElementById('panel-search').style.display    = isNB  ? 'none' : '';
-        document.getElementById('btn-sidebar-notebooks').classList.toggle('active',  isNB);
-        document.getElementById('btn-sidebar-search').classList.toggle('active', !isNB);
+        $('panel-notebooks').style.display = isNB  ? '' : 'none';
+        $('panel-search').style.display    = isNB  ? 'none' : '';
+        $('btn-sidebar-notebooks').classList.toggle('active',  isNB);
+        $('btn-sidebar-search').classList.toggle('active', !isNB);
     },
 
     /** Repopulate the notebook list with <notebook-entry> custom elements */
     renderNotebookList() {
-        const list = document.getElementById('notebook-list');
-        const msg  = document.getElementById('no-notebook-msg');
+        const list = $('notebook-list');
+        const msg  = $('no-notebook-msg');
         const real = this.notebooks.filter(n => !n.needsPermission);
         const pend = this.notebooks.filter(n =>  n.needsPermission);
 
@@ -1353,7 +1286,7 @@ const App = {
             // Notebook only reads as "active" when we're actually viewing it —
             // not while the Drawer is showing an isolated file.
             if (nb.id === this.activeNotebookId && !this.activeIsDrawer) entry.setAttribute('active', '');
-            //list.insertBefore(entry, document.getElementById('drawer-section'));
+            //list.insertBefore(entry, $('drawer-section'));
             list.appendChild(entry);
         });
 
@@ -1362,9 +1295,9 @@ const App = {
             const div = document.createElement('div');
             div.className = 'notebook-pending';
             div.title = 'Click to reconnect';
-            div.innerHTML = `<span class="pending-icon">⚠</span> <span class="pending-name">${escHtml(nb.name)}</span>`;
+            div.innerHTML = `<span class="pending-icon">⚠</span> <span class="pending-name">${escapeHtml(nb.name)}</span>`;
             div.addEventListener('click', () => this.switchToNotebook(nb.id));
-            //list.insertBefore(div, document.getElementById('drawer-section'));
+            //list.insertBefore(div, $('drawer-section'));
             list.appendChild(div);
         });
 
@@ -1375,7 +1308,7 @@ const App = {
 
     /** Update the <section-tabs> custom element attributes */
     renderSectionTabs(notebookId) {
-        const el = document.getElementById('section-tabs-el');
+        const el = $('section-tabs-el');
         if (!el) return;
         const nb = this.notebooks.find(n => n.id === notebookId);
         if (!nb) { el.style.display = 'none'; return; }
@@ -1388,7 +1321,7 @@ const App = {
         el.setAttribute('active-section', this.activeSection || '');
 
         // Update the page-list panel header to reflect section + sub-section
-        const hdr = document.getElementById('page-list-section-name');
+        const hdr = $('page-list-section-name');
         if (hdr) hdr.textContent = this._pageListHeader(this.activeSection, this.activeSubsection);
     },
 
@@ -1397,7 +1330,7 @@ const App = {
      *  is always the "Pages" pseudo-tab (PAGES_PSEUDO_TAB, labelled "Pages")
      *  which represents the section's direct .md files (activeSubsection=null). */
     renderSubsectionTabs(notebookId) {
-        const el = document.getElementById('subsection-tabs-el');
+        const el = $('subsection-tabs-el');
         if (!el) return;
         const nb = this.notebooks.find(n => n.id === notebookId);
         if (!nb) { el.style.display = 'none'; return; }
@@ -1431,8 +1364,8 @@ const App = {
     /** Rebuild the <page-list-item> tree for the given section + sub-section.
      *  If subsectionName is omitted, falls back to this.activeSubsection. */
     renderPageList(sectionName, subsectionName) {
-        const listEl = document.getElementById('page-list-component');
-        const hdr    = document.getElementById('page-list-section-name');
+        const listEl = $('page-list-component');
+        const hdr    = $('page-list-section-name');
         if (!listEl) return;
 
         listEl.innerHTML = '';
@@ -1442,7 +1375,7 @@ const App = {
         if (hdr) hdr.textContent = this._pageListHeader(sectionName, subsection);
 
         if (!sectionName || !this.activeNotebookId) return;
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
 
         const pages = this._getActivePages(nb, sectionName, subsection);
@@ -1526,11 +1459,9 @@ const App = {
      *  explicitly to record the "Pages" pseudo-tab choice. */
     _rememberLastSubsection(sectionName, subsectionName) {
         if (!this.activeNotebookId || !sectionName) return;
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
-        nb.session = nb.session || {};
-        nb.session.sectionLastSubsection = nb.session.sectionLastSubsection || {};
-        nb.session.sectionLastSubsection[sectionName] = subsectionName;
+        (this._session(nb).sectionLastSubsection ??= {})[sectionName] = subsectionName;
     },
 
     /** Set both activeSection and activeSubsection at once, re-rendering the
@@ -1563,7 +1494,7 @@ const App = {
 
     async runSearch() {
         if (!this.activeNotebookId || !this.searchQuery.trim()) return;
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
         this.searchResults = [];
         this.searchRan     = true;
@@ -1592,7 +1523,7 @@ const App = {
                         const start = Math.max(0, pos - 40);
                         const end   = Math.min(line.length, pos + query.length + 40);
                         const snip  = (start > 0 ? '…' : '') + line.slice(start, end) + (end < line.length ? '…' : '');
-                        const hl    = escHtml(snip).replace(new RegExp(escHtml(query), 'gi'), m => `<mark>${m}</mark>`);
+                        const hl    = highlightMatches(snip, query);
                         this.searchResults.push({ path: page.path, handle: page.handle, title: page.title, context: hl });
                     }
                 } catch {}
@@ -1602,20 +1533,20 @@ const App = {
     },
 
     _renderSearchResults() {
-        const list  = document.getElementById('search-results-list');
-        const empty = document.getElementById('search-empty');
+        const list  = $('search-results-list');
+        const empty = $('search-empty');
         list.innerHTML = '';
         empty.style.display = (this.searchRan && !this.searchResults.length) ? '' : 'none';
         for (const r of this.searchResults) {
             const div = document.createElement('div');
             div.className = 'search-result-item';
-            div.innerHTML = `<div class="search-result-title">${escHtml(r.title)}</div>
+            div.innerHTML = `<div class="search-result-title">${escapeHtml(r.title)}</div>
                              <div class="search-result-context">${r.context}</div>`;
             // When a search result is clicked, switch the section + sub-section
             // tabs to where the page lives before opening it, so the user sees
             // the correct context in the page list and tab rows.
             div.addEventListener('click', async () => {
-                const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+                const nb = this.activeNotebook;
                 const loc = nb ? this._findNoteWithSection(nb, { path: r.path }) : null;
                 if (loc) this._setActiveSectionAndSubsection(loc.section, loc.subsection);
                 await this.openPage(r.path, r.handle);
@@ -1630,37 +1561,28 @@ const App = {
 
     async handleLinkClick({ href, isWiki, isProto }) {
         if (isProto) {
-            const parts = href.split('/');
-            const nbName = parts[0];
-            const filePath = parts.slice(1).join('/') + '.md';
-            const nb = this.notebooks.find(n => n.name === nbName);
-            if (!nb) { this.toast(`Open notebook "${nbName}" to follow this link.`); return; }
-            const result = this._findNoteWithSection(nb, { path: filePath });
-            if (result?.node?.handle) {
-                if (nb.id !== this.activeNotebookId) await this.switchToNotebook(nb.id);
-                // Switch section + sub-section to where the target page lives,
-                // so the section/sub-section tabs and page list all sync up.
-                this._setActiveSectionAndSubsection(result.section, result.subsection);
-                await this.openPage(filePath, result.node.handle);
-            } else this.toast(`Page not found: ${href}`);
+            const parts  = href.split('/');
+            const nb     = this.notebooks.find(n => n.name === parts[0]);
+            if (!nb) { this.toast(`Open notebook "${parts[0]}" to follow this link.`); return; }
+            await this._gotoPage(nb, { path: parts.slice(1).join('/') + '.md' }, `Page not found: ${href}`);
             return;
         }
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        if (!isWiki && APP_LINK_RE.test(href)) { openExternalApp(href); return; }   // Preview and Live Preview both land here
+        const nb = this.activeNotebook;
         if (!nb) return;
-        if (isWiki) {
-            const result = this._findNoteWithSection(nb, { title: href });
-            if (result?.node?.handle) {
-                this._setActiveSectionAndSubsection(result.section, result.subsection);
-                await this.openPage(result.node.path, result.node.handle);
-            } else this.toast(`Page not found: [[${href}]]`);
-        } else {
-            if (/^https?:\/\//.test(href)) { window.open(href, '_blank'); return; }
-            const result = this._findNoteWithSection(nb, { path: href });
-            if (result?.node?.handle) {
-                this._setActiveSectionAndSubsection(result.section, result.subsection);
-                await this.openPage(result.node.path, result.node.handle);
-            } else this.toast(`Page not found: ${href}`);
-        }
+        if (isWiki) return this._gotoPage(nb, { title: href }, `Page not found: [[${href}]]`);
+        if (/^https?:\/\//.test(href)) { window.open(href, '_blank'); return; }
+        await this._gotoPage(nb, { path: href }, `Page not found: ${href}`);
+    },
+
+    /** Open the page found by { title } or { path }, first switching notebook, section and
+     *  sub-section so the tabs and page list sync up. Toasts notFound if there is no such page. */
+    async _gotoPage(nb, query, notFound) {
+        const found = this._findNoteWithSection(nb, query);
+        if (!found?.node?.handle) { this.toast(notFound); return; }
+        if (nb.id !== this.activeNotebookId) await this.switchToNotebook(nb.id);
+        this._setActiveSectionAndSubsection(found.section, found.subsection);
+        await this.openPage(found.node.path, found.node.handle);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1669,53 +1591,36 @@ const App = {
     // page tree, so a page can be found no matter which sub-section it lives in.
     // ─────────────────────────────────────────────────────────────────────────
 
-    _findPageByPath(nb, path) {
+    /** Every list of pages in a notebook, with where it lives: each section's direct pages,
+     *  each sub-section's pages, then the unfiled pages. Lookups all walk this one sequence. */
+    *_pageRoots(nb) {
         for (const section of nb.sections) {
-            const found = this._walkPages(section.pages, p => p.path === path);
-            if (found) return found;
-            for (const sub of section.subsections || []) {
-                const subFound = this._walkPages(sub.pages, p => p.path === path);
-                if (subFound) return subFound;
-            }
+            yield { pages: section.pages, section: section.name, subsection: null };
+            for (const sub of section.subsections || [])
+                yield { pages: sub.pages, section: section.name, subsection: sub.name };
         }
-        return nb.unfiledPages.find(p => p.path === path) || null;
+        yield { pages: nb.unfiledPages, section: 'Unfiled', subsection: null };
     },
 
-    _findNoteByTitle(nb, title) {
-        const low = title.toLowerCase();
-        const pred = p => p.type === 'page' && p.title.toLowerCase() === low;
-        for (const section of nb.sections) {
-            const found = this._walkPages(section.pages, pred);
-            if (found) return found;
-            for (const sub of section.subsections || []) {
-                const subFound = this._walkPages(sub.pages, pred);
-                if (subFound) return subFound;
-            }
+    /** First page matching pred, as { node, section, subsection } (or null). */
+    _findPage(nb, pred) {
+        for (const root of this._pageRoots(nb)) {
+            const node = this._walkPages(root.pages, pred);
+            if (node) return { node, section: root.section, subsection: root.subsection };
         }
-        return nb.unfiledPages.find(p => p.title.toLowerCase() === low) || null;
-    },
-
-    /** Like _findNoteByTitle/_findPageByPath, but also returns which section
-     *  (or 'Unfiled') AND sub-section (or null) the page lives in, so callers
-     *  like wikilink navigation can switch both tab rows to match before
-     *  opening the page. */
-    _findNoteWithSection(nb, { title, path } = {}) {
-        const pred = p => p.type === 'page' &&
-            (title ? p.title.toLowerCase() === title.toLowerCase() : p.path === path);
-        for (const section of nb.sections) {
-            // Direct pages of the section (subsection = null)
-            const found = this._walkPages(section.pages, pred);
-            if (found) return { node: found, section: section.name, subsection: null };
-            // Pages inside each sub-section
-            for (const sub of section.subsections || []) {
-                const subFound = this._walkPages(sub.pages, pred);
-                if (subFound) return { node: subFound, section: section.name, subsection: sub.name };
-            }
-        }
-        const unfiled = nb.unfiledPages.find(p =>
-            title ? p.title.toLowerCase() === title.toLowerCase() : p.path === path);
-        if (unfiled) return { node: unfiled, section: 'Unfiled', subsection: null };
         return null;
+    },
+
+    _findPageByPath(nb, path) {
+        return this._findPage(nb, p => p.path === path)?.node || null;
+    },
+
+    /** Find a page by title (wikilinks) or by path, and report which section (or 'Unfiled')
+     *  and sub-section (or null) it lives in, so callers can switch both tab rows to match
+     *  before opening it. */
+    _findNoteWithSection(nb, { title, path } = {}) {
+        const low = title ? title.toLowerCase() : null;
+        return this._findPage(nb, p => p.type === 'page' && (low ? p.title.toLowerCase() === low : p.path === path));
     },
 
     _walkPages(pages, pred) {
@@ -1732,34 +1637,31 @@ const App = {
 
     _showContextMenu(e, ctx) {
         e.preventDefault();
-        const menu = document.getElementById('context-menu');
+        const menu = $('context-menu');
         menu.querySelectorAll('.ctx-editor-item, .ctx-sep').forEach(el => el.remove());
 
-        const showMove = on => { const m = document.getElementById('ctx-move'); if (m) m.style.display = on ? '' : 'none'; };
+        const showMove = on => { const m = $('ctx-move'); if (m) m.style.display = on ? '' : 'none'; };
         if (ctx.kind === 'node') {
             this._ctxNode = ctx.node;
             this._ctxTab  = null;
-            this._ctxKind = 'node';
-            document.getElementById('ctx-rename').style.display = ctx.node.type === 'folder' ? 'none' : '';
-            document.getElementById('ctx-delete').style.display = '';
+            $('ctx-rename').style.display = '';
+            $('ctx-delete').style.display = '';
             showMove(ctx.node.type === 'page' && !!ctx.node.handle);
         } else if (ctx.kind === 'tab') {
             this._ctxNode = null;
             this._ctxTab  = ctx.tab;
-            this._ctxKind = 'tab';
-            document.getElementById('ctx-rename').style.display = '';
-            document.getElementById('ctx-delete').style.display = '';
+            $('ctx-rename').style.display = '';
+            $('ctx-delete').style.display = '';
             showMove(false);
         } else {
             this._ctxNode = null;
             this._ctxTab  = null;
-            this._ctxKind = 'editor';
-            document.getElementById('ctx-rename').style.display = 'none';
-            document.getElementById('ctx-delete').style.display = 'none';
+            $('ctx-rename').style.display = 'none';
+            $('ctx-delete').style.display = 'none';
             showMove(false);
 
             const isPreview = this.editorMode === 'preview';
-            const editorEl  = document.getElementById('editor');
+            const editorEl  = $('editor');
             const hasSel    = isPreview
                 ? (window.getSelection()?.toString().length ?? 0) > 0
                 : (editorEl?.getActiveCm()?.getSelection().length ?? 0) > 0;
@@ -1813,15 +1715,15 @@ const App = {
     },
 
     _hideContextMenu() {
-        document.getElementById('context-menu').classList.remove('show');
-        this._ctxNode = null; this._ctxKind = null; this._ctxTab = null;
-        document.getElementById('ctx-rename').style.display = '';
-        document.getElementById('ctx-delete').style.display = '';
-        const mv = document.getElementById('ctx-move'); if (mv) mv.style.display = 'none';
+        $('context-menu').classList.remove('show');
+        this._ctxNode = null; this._ctxTab = null;
+        $('ctx-rename').style.display = '';
+        $('ctx-delete').style.display = '';
+        const mv = $('ctx-move'); if (mv) mv.style.display = 'none';
     },
 
     _handleEditorCtxAction(action) {
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         const getClink = () => {
             if (!nb || !this.activePage) return;
             const link = `web+cento://link?view=${nb.name}/${this.activePage.replace(/\.md$/, '')}`;
@@ -1830,19 +1732,19 @@ const App = {
         };
 
         if (this.editorMode === 'preview') {
-            if (action === 'copy') { const sel = window.getSelection()?.toString(); if (sel) navigator.clipboard.writeText(sel).catch(() => document.execCommand('copy')); }
+            if (action === 'copy') { const sel = window.getSelection()?.toString(); if (sel) copyText(sel); }
             if (action === 'cento-link') getClink();
             return;
         }
 
-        const cm = document.getElementById('editor')?.getActiveCm();
+        const cm = $('editor')?.getActiveCm();
         if (!cm) return;
         const sel = cm.getSelection(), hasText = sel.length > 0;
         const wrap = (o, c) => { if (hasText) cm.replaceSelection(o + sel + c); };
 
         switch (action) {
-            case 'copy':        if (hasText) navigator.clipboard.writeText(sel).catch(() => document.execCommand('copy')); break;
-            case 'cut':         if (hasText) { navigator.clipboard.writeText(sel).catch(() => document.execCommand('copy')); cm.replaceSelection(''); } break;
+            case 'copy':        if (hasText) copyText(sel); break;
+            case 'cut':         if (hasText) { copyText(sel); cm.replaceSelection(''); } break;
             case 'paste':       cm.focus(); document.execCommand('paste'); break;
             case 'bold':        wrap('**', '**'); break;
             case 'italic':      wrap('*', '*'); break;
@@ -1883,9 +1785,8 @@ const App = {
         this.activePageDirty  = false;
         this.activeIsDrawer   = true;
 
-        const editorEl = document.getElementById('editor');
-        editorEl.style.display = '';
-        document.getElementById('welcome').style.display = 'none';
+        const editorEl = $('editor');
+        this._showEditor(true);
         editorEl.load(content, []);
         this._renderToolbar();
         this.renderDrawer();
@@ -1901,8 +1802,7 @@ const App = {
         this.drawerFiles = this.drawerFiles.filter(f => f.path !== path);
         if (this.activePage === path) {
             this.activePage = null; this.activePageHandle = null; this.activeIsDrawer = false;
-            document.getElementById('editor').style.display = 'none';
-            document.getElementById('welcome').style.display = '';
+            this._showEditor(false);
             this.renderNotebookList();
             this._applyWidths();
         }
@@ -1936,8 +1836,8 @@ const App = {
     },
 
     renderDrawer() {
-        const section = document.getElementById('drawer-section');
-        const list    = document.getElementById('drawer-list');
+        const section = $('drawer-section');
+        const list    = $('drawer-list');
         if (!section || !list) return;
         if (!this.drawerFiles.length) { section.style.display = 'none'; return; }
 
@@ -1949,7 +1849,7 @@ const App = {
             row.className = 'tree-row' + (isActive ? ' active-file' : '');
             row.innerHTML = `<span style="width:12px;display:inline-block"></span>
                 <svg class="tree-icon"><use href="#icon-file"/></svg>
-                <span class="tree-label">${escHtml(file.title)}</span>
+                <span class="tree-label">${escapeHtml(file.title)}</span>
                 <button class="drawer-remove-btn" title="Remove"><svg><use href="#icon-x"/></svg></button>`;
             row.addEventListener('click', e => {
                 if (e.target.closest('.drawer-remove-btn')) return;
@@ -1967,7 +1867,7 @@ const App = {
     // ─────────────────────────────────────────────────────────────────────────
 
     toast(msg, duration = 3000) {
-        const el = document.getElementById('toast');
+        const el = $('toast');
         el.textContent = msg;
         el.classList.add('show');
         setTimeout(() => el.classList.remove('show'), duration);
@@ -1975,13 +1875,18 @@ const App = {
 
     _confirm(message) {
         return new Promise(resolve => {
-            const dialog = document.getElementById('confirm-dialog');
-            document.getElementById('confirm-message').textContent = message;
+            const dialog = $('confirm-dialog');
+            $('confirm-message').textContent = message;
+            // One AbortController removes all three listeners however the dialog ends: OK,
+            // Cancel, or Esc (which closes a modal <dialog> without clicking anything).
+            // Without the 'close' listener an Esc left the old OK handler attached, so the
+            // NEXT confirmation's OK also ran the previous, cancelled action.
+            const ac = new AbortController();
+            const finish = result => { ac.abort(); if (dialog.open) dialog.close(); resolve(result); };
+            $('confirm-ok').addEventListener('click', () => finish(true), { signal: ac.signal });
+            $('confirm-cancel').addEventListener('click', () => finish(false), { signal: ac.signal });
+            dialog.addEventListener('close', () => finish(false), { signal: ac.signal });
             dialog.showModal();
-            const ok = document.getElementById('confirm-ok'), cancel = document.getElementById('confirm-cancel');
-            const finish = result => { dialog.close(); ok.removeEventListener('click', onOk); cancel.removeEventListener('click', onCancel); resolve(result); };
-            const onOk = () => finish(true), onCancel = () => finish(false);
-            ok.addEventListener('click', onOk); cancel.addEventListener('click', onCancel);
         });
     },
 
@@ -1989,20 +1894,11 @@ const App = {
     // Outline panel
     // ─────────────────────────────────────────────────────────────────────────
 
-    _parseHeadings(content) {
-        const headings = [];
-        content.split('\n').forEach((line, i) => {
-            const m = line.match(/^(#{1,6}) (.*)/);
-            if (m) headings.push({ level: m[1].length, text: m[2].trim(), line: i });
-        });
-        return headings;
-    },
-
     _renderOutline() {
-        const list = document.getElementById('outline-list');
+        const list = $('outline-list');
         if (!list) return;
         list.innerHTML = '';
-        const editorEl = document.getElementById('editor');
+        const editorEl = $('editor');
         const cms      = editorEl?.getColumnCms();
         if (!cms?.length) { list.innerHTML = '<div class="outline-empty">No note open.</div>'; return; }
 
@@ -2045,13 +1941,13 @@ const App = {
     // ─────────────────────────────────────────────────────────────────────────
 
     _applyWidths() {
-        const ls  = document.getElementById('sidebar');
-        const pl  = document.getElementById('page-list-panel');
-        const rs  = document.getElementById('right-sidebar');
-        const rhr = document.getElementById('resize-right');
-        const rpg = document.getElementById('resize-page');
-        const st  = document.getElementById('section-tabs-el');
-        const sst = document.getElementById('subsection-tabs-el');
+        const ls  = $('sidebar');
+        const pl  = $('page-list-panel');
+        const rs  = $('right-sidebar');
+        const rhr = $('resize-right');
+        const rpg = $('resize-page');
+        const st  = $('section-tabs-el');
+        const sst = $('subsection-tabs-el');
 
         if (ls)  ls.style.width  = this.sidebarWidth + 'px';
 
@@ -2115,7 +2011,7 @@ const App = {
      *  Icon convention: show the icon of the theme you'd switch TO —
      *  sun when in dark (click → cream/light), moon when in cream (click → dark). */
     _renderThemeButton() {
-        const btn  = document.getElementById('btn-theme');
+        const btn  = $('btn-theme');
         if (!btn) return;
         const sun  = btn.querySelector('.svg-sun');
         const moon = btn.querySelector('.svg-moon');
@@ -2130,19 +2026,19 @@ const App = {
      *  edits a working draft (this._settingsDraft) so Cancel/close without
      *  Apply leaves the saved typography untouched. */
     _initSettingsModal() {
-        const dialog   = document.getElementById('settings-dialog');
-        const grid      = document.getElementById('settings-font-grid');
-        const weightRow = document.getElementById('settings-weight-row');
-        const sizeSlider= document.getElementById('settings-size-slider');
-        const sizeValue = document.getElementById('settings-size-value');
-        const preview   = document.getElementById('settings-preview-text');
+        const dialog   = $('settings-dialog');
+        const grid      = $('settings-font-grid');
+        const weightRow = $('settings-weight-row');
+        const sizeSlider= $('settings-size-slider');
+        const sizeValue = $('settings-size-value');
+        const preview   = $('settings-preview-text');
         const roleTabs  = document.querySelectorAll('.settings-role-tab');
 
         let activeRole = 'body';
 
         const openDialog = () => {
             // Start each session editing a fresh copy of the current settings
-            this._settingsDraft = JSON.parse(JSON.stringify(this.typography));
+            this._settingsDraft = structuredClone(this.typography);
             activeRole = 'body';
             roleTabs.forEach(t => t.classList.toggle('active', t.dataset.role === 'body'));
             renderRole();
@@ -2213,16 +2109,16 @@ const App = {
             preview.style.fontSize = draft.size + 'px';
         });
 
-        document.getElementById('btn-settings').addEventListener('click', openDialog);
-        document.getElementById('btn-settings-close').addEventListener('click', closeDialog);
+        $('btn-settings').addEventListener('click', openDialog);
+        $('btn-settings-close').addEventListener('click', closeDialog);
         dialog.addEventListener('click', e => { if (e.target === dialog) closeDialog(); });
 
-        document.getElementById('btn-settings-reset').addEventListener('click', () => {
-            this._settingsDraft = JSON.parse(JSON.stringify(TYPOGRAPHY_DEFAULTS));
+        $('btn-settings-reset').addEventListener('click', () => {
+            this._settingsDraft = structuredClone(TYPOGRAPHY_DEFAULTS);
             renderRole();
         });
 
-        document.getElementById('btn-settings-apply').addEventListener('click', () => {
+        $('btn-settings-apply').addEventListener('click', () => {
             this.typography = this._settingsDraft;
             this._applyTypography();
             this.scheduleNotebookSessionSave(this.activeNotebookId);
@@ -2276,8 +2172,8 @@ const App = {
     },
 
     _renderNavButtons() {
-        const back    = document.getElementById('btn-nav-back');
-        const forward = document.getElementById('btn-nav-forward');
+        const back    = $('btn-nav-back');
+        const forward = $('btn-nav-forward');
         if (back)    back.disabled    = this._navIndex <= 0;
         if (forward) forward.disabled = this._navIndex >= this._navHistory.length - 1;
     },
@@ -2324,7 +2220,7 @@ const App = {
     // ─────────────────────────────────────────────────────────────────────────
 
     async _openDefaultPageForSection(sectionName) {
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
 
         // Pages visible in the page list for the current (section, sub-section)
@@ -2349,23 +2245,19 @@ const App = {
     // ─────────────────────────────────────────────────────────────────────────
 
     async addSection(sectionName) {
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
 
-        // Resolve any name collision by appending a number
-        let name = (sectionName || 'Untitled').trim();
-        let i = 1;
-        while (nb.sections.find(s => s.name === name)) name = `${sectionName} ${i++}`;
+        const base    = (sectionName || '').trim() || 'Untitled';
+        const problem = this._badFolderName(base, 'section');
+        if (problem) { this.toast(problem, 5000); return; }
+        const name = this._uniqueName(base, nb.sections);   // a clash gets " 1", " 2"…
 
         try {
             await nb.handle.getDirectoryHandle(name, { create: true });
-            await this._scanNotebook(nb);
             this.activeSection    = name;
             this.activeSubsection = null;   // brand-new section has no sub-sections yet
-            this.renderSectionTabs(this.activeNotebookId);
-            this.renderSubsectionTabs(this.activeNotebookId);
-            this.renderPageList(name, null);
-            this.scheduleNotebookSessionSave(this.activeNotebookId);
+            await this._refreshAfterFsChange(nb);   // rescans, then draws tabs + page list
             this.newPage();
         } catch (e) {
             this.toast('Could not create section: ' + e.message);
@@ -2378,24 +2270,21 @@ const App = {
      *  real folder to put a sub-section into). */
     async addSubsection(subsectionName) {
         if (!this.activeNotebookId || !this.activeSection) return;
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
         const section = nb.sections.find(s => s.name === this.activeSection);
         if (!section) return;   // can't add a sub-section to 'Unfiled'
 
-        // Resolve name collisions within this section's sub-sections
-        let name = (subsectionName || 'Untitled').trim();
-        let i = 1;
-        while ((section.subsections || []).find(s => s.name === name)) name = `${subsectionName} ${i++}`;
+        const base    = (subsectionName || '').trim() || 'Untitled';
+        const problem = this._badFolderName(base, 'sub-section');
+        if (problem) { this.toast(problem, 5000); return; }
+        const name = this._uniqueName(base, section.subsections || []);   // a clash gets " 1", " 2"…
 
         try {
             await section.handle.getDirectoryHandle(name, { create: true });
-            await this._scanNotebook(nb);
             this.activeSubsection = name;
             this._rememberLastSubsection(this.activeSection, name);
-            this.renderSubsectionTabs(this.activeNotebookId);
-            this.renderPageList(this.activeSection, name);
-            this.scheduleNotebookSessionSave(this.activeNotebookId);
+            await this._refreshAfterFsChange(nb);
             this.newPage();   // creates the first page inside the new sub-section
         } catch (e) {
             this.toast('Could not create sub-section: ' + e.message);
@@ -2447,10 +2336,10 @@ const App = {
 
     /** Rewrite every saved reference to paths under oldPrefix so they point under newPrefix:
      *  the open page, per-page editor state, expanded pages, last-page-per-tab, and history. */
-    _remapNotebookPaths(nb, oldPrefix, newPrefix) {
+    _remapNotebookPaths(nb, oldPrefix, newPrefix, { sameTab = false } = {}) {
         const map = p => (typeof p === 'string' && (p === oldPrefix || p.startsWith(oldPrefix + '/')))
             ? newPrefix + p.slice(oldPrefix.length) : p;
-        const s = nb.session = nb.session || {};
+        const s = this._session(nb);
         if (s.pageStates)    s.pageStates    = Object.fromEntries(Object.entries(s.pageStates).map(([k, v]) => [map(k), v]));
         if (s.expandedPages) s.expandedPages = s.expandedPages.map(map);
         if (s.sectionLastPage) {
@@ -2460,12 +2349,22 @@ const App = {
             const out = {};
             for (const [k, v] of Object.entries(s.sectionLastPage)) {
                 const nk = map(k), nv = map(v);
-                if ((nk !== k) === (nv !== v)) out[nk] = nv;
+                // sameTab: a page renamed in place stays the tab's "last page" (only the value changes)
+                if (sameTab || (nk !== k) === (nv !== v)) out[nk] = nv;
             }
             s.sectionLastPage = out;
         }
         if (this.activeNotebookId === nb.id && this.activePage) this.activePage = map(this.activePage);
         this._navHistory.forEach(h => { if (h.notebookId === nb.id) h.pagePath = map(h.pagePath); });
+    },
+
+    /** Forget everything saved about a deleted path (and anything beneath it). */
+    _forgetPaths(nb, prefix) {
+        const s     = this._session(nb);
+        const under = p => typeof p === 'string' && (p === prefix || p.startsWith(prefix + '/'));
+        if (s.pageStates)      for (const k of Object.keys(s.pageStates)) if (under(k)) delete s.pageStates[k];
+        if (s.expandedPages)   s.expandedPages = s.expandedPages.filter(p => !under(p));
+        if (s.sectionLastPage) for (const [k, v] of Object.entries(s.sectionLastPage)) if (under(k) || under(v)) delete s.sectionLastPage[k];
     },
 
     /** After a rescan the old file handles are dead: re-resolve the open page's and history's. */
@@ -2525,21 +2424,36 @@ const App = {
     // Section / sub-section tabs: rename and delete  (the tab IS a folder)
     // ─────────────────────────────────────────────────────────────────────────
 
+    /** Why a section / sub-section folder name can't be used (null if it's fine).
+     *  One rule set for adding AND renaming, so the two can't drift apart. */
+    _badFolderName(name, kind) {
+        if (/[\\/:*?"<>|]/.test(name) || name.startsWith('.') || /[. ]$/.test(name))
+            return `A ${kind} name can't contain \\ / : * ? " < > |, start with a dot, or end with a dot or space.`;
+        return null;
+    },
+
+    /** `base`, or "base 1", "base 2"… if a sibling already has that name. Compared
+     *  case-insensitively, the way Windows and macOS file systems treat folder names. */
+    _uniqueName(base, siblings) {
+        const taken = new Set(siblings.map(x => x.name.toLowerCase()));
+        let name = base, i = 1;
+        while (taken.has(name.toLowerCase())) name = `${base} ${i++}`;
+        return name;
+    },
+
     _startTabRename({ level, name }) {
-        document.getElementById(level === 'section' ? 'section-tabs-el' : 'subsection-tabs-el')?.startRename(name);
+        $(level === 'section' ? 'section-tabs-el' : 'subsection-tabs-el')?.startRename(name);
     },
 
     async renameTab(level, oldName, newName) {
         newName = (newName || '').trim();
         if (!newName || newName === oldName) return;
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
         const kind = level === 'section' ? 'section' : 'sub-section';
 
-        if (/[\\/:*?"<>|]/.test(newName) || newName.startsWith('.') || /[. ]$/.test(newName)) {
-            this.toast(`A ${kind} name can't contain \\ / : * ? " < > |, start with a dot, or end with a dot or space.`, 5000);
-            return;
-        }
+        const problem = this._badFolderName(newName, kind);
+        if (problem) { this.toast(problem, 5000); return; }
         const section  = level === 'section' ? null : nb.sections.find(s => s.name === this.activeSection);
         const siblings = level === 'section' ? nb.sections : (section?.subsections || []);
         const entry    = siblings.find(s => s.name === oldName);
@@ -2563,7 +2477,7 @@ const App = {
 
         // Keep every saved reference pointing at the renamed folder
         this._remapNotebookPaths(nb, oldPath, newPath);
-        const s = nb.session = nb.session || {};
+        const s = this._session(nb);
         if (level === 'section') {
             if (this.activeSection === oldName) this.activeSection = newName;
             if (s.sectionLastSubsection && oldName in s.sectionLastSubsection) {
@@ -2583,7 +2497,7 @@ const App = {
     },
 
     async deleteTab({ level, name }) {
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb) return;
         const section = level === 'section' ? null : nb.sections.find(s => s.name === this.activeSection);
         const entry   = (level === 'section' ? nb.sections : (section?.subsections || [])).find(s => s.name === name);
@@ -2598,7 +2512,7 @@ const App = {
         const parent    = level === 'section' ? nb.handle : section.handle;
         const hadActive = !!this.activePage && !this.activeIsDrawer &&
                           (this.activePage === entry.path || this.activePage.startsWith(entry.path + '/'));
-        clearTimeout(this._saveTimer);
+        if (hadActive) clearTimeout(this._saveTimer);   // (an unrelated page keeps its pending autosave)
         try {
             await parent.removeEntry(name, { recursive: true });
         } catch (e) {
@@ -2607,11 +2521,8 @@ const App = {
         }
 
         // Forget everything saved about the deleted folder
-        const s     = nb.session = nb.session || {};
-        const under = p => typeof p === 'string' && (p === entry.path || p.startsWith(entry.path + '/'));
-        if (s.pageStates)      for (const k of Object.keys(s.pageStates)) if (under(k)) delete s.pageStates[k];
-        if (s.expandedPages)   s.expandedPages = s.expandedPages.filter(p => !under(p));
-        if (s.sectionLastPage) for (const [k, v] of Object.entries(s.sectionLastPage)) if (under(k) || under(v)) delete s.sectionLastPage[k];
+        const s = this._session(nb);
+        this._forgetPaths(nb, entry.path);
         if (s.sectionLastSubsection) {
             if (level === 'section') delete s.sectionLastSubsection[name];
             else if (s.sectionLastSubsection[section.name] === name) delete s.sectionLastSubsection[section.name];
@@ -2620,8 +2531,7 @@ const App = {
 
         if (hadActive) {
             this.activePage = null; this.activePageHandle = null; this.activePageDirty = false;
-            document.getElementById('editor').style.display = 'none';
-            document.getElementById('welcome').style.display = '';
+            this._showEditor(false);
         }
         if (level === 'subsection' && this.activeSubsection === name) this.activeSubsection = null;
 
@@ -2637,20 +2547,20 @@ const App = {
     /** The folder paired with this page (Foo.md + Foo/), or null. Pairing only exists inside
      *  sub-sections: at the notebook root and section top level a folder is a section / sub-section. */
     async _pairedDir(nb, node) {
-        const parent = node.path.includes('/') ? node.path.slice(0, node.path.lastIndexOf('/')) : '';
+        const parent = parentPath(node.path);
         if (!parent.includes('/')) return null;
         try { return await (await resolveDir(nb.handle, parent)).getDirectoryHandle(node.title); }
         catch { return null; }
     },
 
     _initMoveDialog() {
-        const dialog = document.getElementById('move-dialog');
+        const dialog = $('move-dialog');
         if (!dialog) return;
         const close = () => dialog.close();
-        document.getElementById('btn-move-close')?.addEventListener('click', close);
-        document.getElementById('btn-move-cancel')?.addEventListener('click', close);
+        $('btn-move-close')?.addEventListener('click', close);
+        $('btn-move-cancel')?.addEventListener('click', close);
         dialog.addEventListener('click', e => { if (e.target === dialog) close(); });
-        document.getElementById('btn-move-confirm')?.addEventListener('click', () => {
+        $('btn-move-confirm')?.addEventListener('click', () => {
             const node = this._moveNode, dest = this._moveDest;
             close();
             if (node && dest) this.movePage(node, dest);
@@ -2659,17 +2569,17 @@ const App = {
 
     /** Show the destination tree: Unfiled, then each section with its sub-sections. */
     async openMoveDialog(node) {
-        const nb     = this.notebooks.find(n => n.id === this.activeNotebookId);
-        const dialog = document.getElementById('move-dialog');
+        const nb     = this.activeNotebook;
+        const dialog = $('move-dialog');
         if (!nb || !node?.handle || !dialog) return;
-        const tree    = document.getElementById('move-tree');
-        const confirm = document.getElementById('btn-move-confirm');
+        const tree    = $('move-tree');
+        const confirm = $('btn-move-confirm');
 
         const hasChildren = !!(await this._pairedDir(nb, node));
-        const here = node.path.includes('/') ? node.path.slice(0, node.path.lastIndexOf('/')) : '';
+        const here = parentPath(node.path);
 
         this._moveNode = node; this._moveDest = null; confirm.disabled = true;
-        document.getElementById('move-page-name').textContent = `Move \u201C${node.title}\u201D to:`;
+        $('move-page-name').textContent = `Move \u201C${node.title}\u201D to:`;
         tree.innerHTML = '';
 
         const makeRow = (dest, depth, collapsible) => {
@@ -2720,11 +2630,11 @@ const App = {
     },
 
     async movePage(node, dest) {
-        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const nb = this.activeNotebook;
         if (!nb || !node?.handle) return;
 
         const srcPath   = node.path;
-        const srcParent = srcPath.includes('/') ? srcPath.slice(0, srcPath.lastIndexOf('/')) : '';
+        const srcParent = parentPath(srcPath);
         if (srcParent === dest.path) { this.toast('That page is already there.'); return; }
 
         const pairedDir = await this._pairedDir(nb, node);

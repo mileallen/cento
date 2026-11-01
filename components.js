@@ -2,7 +2,7 @@
 // components.js — Cento Web Components
 //
 // Load order: codemirror → markdown → typo → app.js → components.js
-// app.js defines the global App object and helpers (rebuildDecorations, mdToHtml).
+// app.js defines the global App object and helpers (rebuildDecorations).
 // This file defines custom elements that call those globals, then boots App.init().
 //
 // Shadow DOM is used for all UI shell components so their internal styles are
@@ -15,6 +15,34 @@
 // global rules in looks.css. Attaching a shadow root would block those rules.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Fire a CustomEvent that bubbles out of any shadow root, so App can listen on the document. */
+const emit = (el, name, detail = {}) =>
+    el.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true, detail }));
+
+/** Inline text box used for every rename / "add" in the UI. It sits inside `host`, and exactly
+ *  one of onCommit(value) / onCancel() fires: Enter or blur commits, Escape cancels. */
+function inlineInput(host, { value, className, spellcheck = true }, onCommit, onCancel) {
+    const input = document.createElement('input');
+    input.className  = className;
+    input.value      = value;
+    input.spellcheck = spellcheck;
+    host.appendChild(input);
+
+    let done = false;
+    const finish = commit => {
+        if (done) return;
+        done = true;
+        commit ? onCommit(input.value) : onCancel();
+    };
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Enter')  { e.preventDefault(); finish(true); }
+        if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
+    setTimeout(() => { input.select(); input.focus(); }, 30);
+    return input;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // <notebook-entry>
 //
@@ -25,7 +53,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 class NotebookEntry extends HTMLElement {
     static get observedAttributes() {
-        return ['name', 'active'];
+        return ['name'];
     }
 
     constructor() {
@@ -90,25 +118,13 @@ class NotebookEntry extends HTMLElement {
             if (e.target.closest('.close'))
                 return;
             // composed: true lets the event escape the shadow boundary so App can hear it
-            this.dispatchEvent(new CustomEvent('notebook-activate',{
-                bubbles: true,
-                composed: true,
-                detail: {
-                    id: Number(this.getAttribute('notebook-id'))
-                }
-            }));
+            emit(this, 'notebook-activate', { id: Number(this.getAttribute('notebook-id')) });
         }
         );
 
         this.shadowRoot.querySelector('.close').addEventListener('click', e => {
             e.stopPropagation();
-            this.dispatchEvent(new CustomEvent('notebook-close',{
-                bubbles: true,
-                composed: true,
-                detail: {
-                    id: Number(this.getAttribute('notebook-id'))
-                }
-            }));
+            emit(this, 'notebook-close', { id: Number(this.getAttribute('notebook-id')) });
         }
         );
     }
@@ -287,8 +303,11 @@ class SectionTabs extends HTMLElement {
     connectedCallback() {
         this._render();
     }
+    // The app sets 'sections' and 'active-section' back to back: draw once, after both.
     attributeChangedCallback() {
-        this._render();
+        if (this._renderQueued) return;
+        this._renderQueued = true;
+        queueMicrotask(() => { this._renderQueued = false; this._render(); });
     }
 
     _render() {
@@ -314,19 +333,10 @@ class SectionTabs extends HTMLElement {
             // Right-click: the app shows its shared context menu (Rename / Delete) at the pointer
             tab.addEventListener('contextmenu', e => {
                 e.preventDefault();
-                this.dispatchEvent(new CustomEvent('tab-contextmenu', {
-                    bubbles: true, composed: true,
-                    detail: { name: sec.name, x: e.clientX, y: e.clientY }
-                }));
+                emit(this, 'tab-contextmenu', { name: sec.name, x: e.clientX, y: e.clientY });
             });
             tab.addEventListener('click', () => {
-                this.dispatchEvent(new CustomEvent(this._changeEvent,{
-                    bubbles: true,
-                    composed: true,
-                    detail: {
-                        section: sec.name
-                    }
-                }));
+                emit(this, this._changeEvent, { section: sec.name });
             }
             );
             bar.appendChild(tab);
@@ -342,30 +352,6 @@ class SectionTabs extends HTMLElement {
         bar.appendChild(addBtn);
     }
 
-    /** Shared inline text box used by both "add" and "rename". It sits inside `host` (a .tab),
-     *  and exactly one of onCommit(value) / onCancel() fires: Enter or blur commits, Escape cancels. */
-    _inlineInput(host, initial, onCommit, onCancel) {
-        const input = document.createElement('input');
-        input.className = 'new-tab-input';
-        input.value = initial;
-        input.spellcheck = false;
-        host.appendChild(input);
-
-        let done = false;
-        const finish = commit => {
-            if (done) return;
-            done = true;
-            commit ? onCommit(input.value) : onCancel();
-        };
-        input.addEventListener('keydown', e => {
-            if (e.key === 'Enter')  { e.preventDefault(); finish(true); }
-            if (e.key === 'Escape') { e.preventDefault(); finish(false); }
-        });
-        input.addEventListener('blur', () => finish(true));
-
-        setTimeout(() => { input.select(); input.focus(); }, 30);
-    }
-
     _startAddSection() {
         const bar = this.shadowRoot.querySelector('.bar');
         // Prevent opening a second input if one is already active
@@ -377,11 +363,11 @@ class SectionTabs extends HTMLElement {
         // Slot it in before the + button
         bar.insertBefore(tempTab, bar.querySelector('.add-section-btn'));
 
-        this._inlineInput(tempTab, 'Untitled',
+        inlineInput(tempTab, { value: 'Untitled', className: 'new-tab-input', spellcheck: false },
             value => {
                 const name = value.trim() || 'Untitled';
                 tempTab.remove();
-                this.dispatchEvent(new CustomEvent(this._addEvent, { bubbles: true, composed: true, detail: { name } }));
+                emit(this, this._addEvent, { name });
             },
             () => tempTab.remove());
     }
@@ -396,12 +382,12 @@ class SectionTabs extends HTMLElement {
         if (!tab)
             return;
         tab.textContent = '';
-        this._inlineInput(tab, name,
+        inlineInput(tab, { value: name, className: 'new-tab-input', spellcheck: false },
             value => {
                 const newName = value.trim();
                 this._render();   // restore the tab at once; the app re-renders again after the folder is renamed
                 if (newName && newName !== name)
-                    this.dispatchEvent(new CustomEvent('tab-rename', { bubbles: true, composed: true, detail: { oldName: name, newName } }));
+                    emit(this, 'tab-rename', { oldName: name, newName });
             },
             () => this._render());
     }
@@ -455,7 +441,7 @@ customElements.define('page-list', PageList);
 // ─────────────────────────────────────────────────────────────────────────────
 class PageListItem extends HTMLElement {
     static get observedAttributes() {
-        return ['title', 'depth', 'has-children', 'expanded', 'active', 'is-group', 'renaming'];
+        return ['title', 'depth', 'has-children', 'renaming'];   // expanded / active / is-group are CSS-only
     }
 
     constructor() {
@@ -537,24 +523,11 @@ class PageListItem extends HTMLElement {
             if (this.hasAttribute('has-children') || this.hasAttribute('is-group')) {
                 const willExpand = !this.hasAttribute('expanded');
                 willExpand ? this.setAttribute('expanded', '') : this.removeAttribute('expanded');
-                this.dispatchEvent(new CustomEvent('item-toggle',{
-                    bubbles: true,
-                    composed: true,
-                    detail: {
-                        path: this.getAttribute('page-path'),
-                        expanded: willExpand
-                    }
-                }));
+                emit(this, 'item-toggle', { path: this.getAttribute('page-path'), expanded: willExpand });
             }
             // Navigate only for real pages (not group headers)
             if (!this.hasAttribute('is-group') && this.getAttribute('page-path')) {
-                this.dispatchEvent(new CustomEvent('page-select',{
-                    bubbles: true,
-                    composed: true,
-                    detail: {
-                        path: this.getAttribute('page-path')
-                    }
-                }));
+                emit(this, 'page-select', { path: this.getAttribute('page-path') });
             }
         }
         );
@@ -563,10 +536,7 @@ class PageListItem extends HTMLElement {
             e.preventDefault();
             const path = this.getAttribute('page-path');
             if (!path) return;
-            this.dispatchEvent(new CustomEvent('page-contextmenu', {
-                bubbles: true, composed: true,
-                detail: { path, title: this.getAttribute('title') || '', x: e.clientX, y: e.clientY }
-            }));
+            emit(this, 'page-contextmenu', { path, title: this.getAttribute('title') || '', x: e.clientX, y: e.clientY });
         });
     }
 
@@ -575,23 +545,8 @@ class PageListItem extends HTMLElement {
     }
 
     attributeChangedCallback(name, _old, val) {
-        if (name === 'title') {
-            const el = this.shadowRoot.querySelector('.label');
-            if (el)
-                el.textContent = val || '';
-        }
-        if (name === 'depth') {
-            this._updateDepth(parseInt(val) || 0);
-        }
-        if (name === 'has-children') {
-            const t = this.shadowRoot.querySelector('.toggle');
-            if (t)
-                t.textContent = val !== null ? '▶' : '';
-        }
-        if (name === 'renaming') {
-            if (val !== null)
-                this._showRenameInput();
-        }
+        if (name !== 'renaming') this._sync();
+        else if (val !== null)   this._showRenameInput();
     }
 
     _sync() {
@@ -614,56 +569,19 @@ class PageListItem extends HTMLElement {
 
     _showRenameInput() {
         const label = this.shadowRoot.querySelector('.label');
-        if (!label)
-            return;
+        if (!label) return;
         label.style.display = 'none';
 
-        const input = document.createElement('input');
-        input.className = 'rename-input';
-        input.value = this.getAttribute('title') || '';
-        this.shadowRoot.querySelector('.item').appendChild(input);
-
-        let committed = false;
-        const commit = () => {
-            if (committed)
-                return;
-            committed = true;
-            const newTitle = input.value.trim();
-            input.remove();
-            label.style.display = '';
-            this.removeAttribute('renaming');
-            if (newTitle && newTitle !== this.getAttribute('title')) {
-                this.dispatchEvent(new CustomEvent('page-rename',{
-                    bubbles: true,
-                    composed: true,
-                    detail: {
-                        path: this.getAttribute('page-path'),
-                        newTitle
-                    }
-                }));
-            }
-        }
-        ;
-
-        input.addEventListener('keydown', e => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                commit();
-            }
-            if (e.key === 'Escape') {
-                committed = true;
-                input.remove();
-                label.style.display = '';
-                this.removeAttribute('renaming');
-            }
-        }
-        );
-        input.addEventListener('blur', commit);
-        setTimeout( () => {
-            input.select();
-            input.focus();
-        }
-        , 30);
+        const restore = () => { input.remove(); label.style.display = ''; this.removeAttribute('renaming'); };
+        const input = inlineInput(this.shadowRoot.querySelector('.item'),
+            { value: this.getAttribute('title') || '', className: 'rename-input' },
+            value => {
+                const newTitle = value.trim();
+                restore();
+                if (newTitle && newTitle !== this.getAttribute('title'))
+                    emit(this, 'page-rename', { path: this.getAttribute('page-path'), newTitle });
+            },
+            restore);
     }
 }
 customElements.define('page-list-item', PageListItem);
@@ -694,7 +612,6 @@ customElements.define('page-list-item', PageListItem);
 //   cursor-change    — cursor moved, App updates outline if open
 //   column-count-change { detail: { count } } — App updates toolbar button states
 //   link-click      { detail: { href, isWiki } } — user clicked a link in preview
-//   save-request     — user pressed Ctrl/Cmd+S, App saves immediately
 // ─────────────────────────────────────────────────────────────────────────────
 class CentoEditor extends HTMLElement {
     constructor() {
@@ -831,6 +748,7 @@ class CentoEditor extends HTMLElement {
 
         // Push merged content into the now-last CM
         prevCm.setValue(merged);
+        prevCm.clearHistory();   // a column merge can't be undone with Ctrl+Z
 
         this._focusedColIdx = Math.min(this._focusedColIdx, this._cms.length - 1);
         requestAnimationFrame( () => {
@@ -917,8 +835,6 @@ class CentoEditor extends HTMLElement {
             autofocus: colIndex === 0,
             styleActiveLine: true,
             extraKeys: {
-                'Ctrl-S': () => this._dispatch('save-request'),
-                'Cmd-S': () => this._dispatch('save-request'),
                 // Ctrl+K — wrap selection as a markdown link
                 'Ctrl-K': () => {
                     const sel = cm.getSelection();
@@ -930,6 +846,18 @@ class CentoEditor extends HTMLElement {
                         line: cur.line,
                         ch: cur.ch - 1
                     });
+                }
+                ,
+                // Ctrl+B — wrap selection as Bold
+                'Ctrl-B': () => {
+                    const sel = cm.getSelection();
+                    if (sel) cm.replaceSelection(`**${sel}**`);
+                }
+                ,
+                // Ctrl+I — wrap selection as Italic
+                'Ctrl-I': () => {
+                    const sel = cm.getSelection();
+                    if (sel) cm.replaceSelection(`*${sel}*`);
                 }
                 ,
                 // Enter — detect if the current line is the <!column> delimiter
@@ -951,6 +879,7 @@ class CentoEditor extends HTMLElement {
             line: 0,
             ch: 0
         });
+        cm.clearHistory();   // loading the note isn't a user edit, so Ctrl+Z must not be able to undo it
         cm.setSize('100%', '100%');
 
         if (this._editorMode === 'live')
@@ -1035,8 +964,8 @@ class CentoEditor extends HTMLElement {
             }
             const col = document.createElement('div');
             col.className = 'preview-col-pane';
-            // mdToHtml is a global function defined in app.js
-            col.innerHTML = `<div class="preview-content">${mdToHtml(cm.getValue(), footnotes)}</div>`;
+            // renderMarkdown is a global function defined in markdown.js
+            col.innerHTML = `<div class="preview-content">${renderMarkdown(cm.getValue(), { footnotes })}</div>`;
             preview.appendChild(col);
             lastContent = col.firstElementChild;
         }
@@ -1115,6 +1044,7 @@ class CentoEditor extends HTMLElement {
         }, (_, i) => cm.getLine(cursorLine + 1 + i)).join('\n');
 
         cm.setValue(above);
+        cm.clearHistory();       // a column split can't be undone with Ctrl+Z
         // update current CM in place
 
         // Insert divider + new col-pane immediately after the current col-pane
@@ -1161,11 +1091,7 @@ class CentoEditor extends HTMLElement {
 
     /** Helper: fire a CustomEvent that bubbles through the composed DOM tree */
     _dispatch(name, detail={}) {
-        this.dispatchEvent(new CustomEvent(name,{
-            bubbles: true,
-            composed: true,
-            detail
-        }));
+        emit(this, name, detail);
     }
 }
 customElements.define('cento-editor', CentoEditor);
