@@ -61,13 +61,9 @@ Notebook folder/         ← a folder you open as a notebook
 
 ### Columns
 
-One other thing Obsidian does not offer natively: comparing or composing content side by side within a single document. Again, in service of spatial organization, Cento lets you split any note into up to four columns. The columns are recorded in the `.md` file itself using a simple HTML comment delimiter (`
-< !column>
-`) that other markdown renderers silently ignore — so the file degrades gracefully outside Cento.
+One other thing Obsidian does not offer natively: comparing or composing content side by side within a single document. Again, in service of spatial organization, Cento lets you split any note into up to four columns. The columns are recorded in the `.md` file itself using a simple HTML comment delimiter (`<!column>`) that other markdown renderers silently ignore — so the file degrades gracefully outside Cento.
 
-To add a column: click the `+` column button in the toolbar (splits at the cursor position), or type `
-< !column>
-` anywhere in the note and press Enter. To remove the last column: click the `−` column button (content is merged back into the previous column).
+To add a column: click the `+` column button in the toolbar (splits at the cursor position), or type `<!column>` anywhere in the note and press Enter. To remove the last column: click the `−` column button (content is merged back into the previous column).
 
 ### Navigation
 
