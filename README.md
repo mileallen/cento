@@ -6,7 +6,7 @@ Cento is a minimal, offline-first markdown notes app that runs in the browser as
 
 ---
 
-<img src="/images/screenshot-2026-06-30.png" width="100%">
+<img src="/images/screenshot-2026-11-01.png" width="100%">
 
 ---
 
