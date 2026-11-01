@@ -179,7 +179,7 @@
     --green: #0d6a0d ;          /* muted forest green, readable on cream */
     --yellow: #B8862C;         /* amber/mustard — "yellow" on cream */
     --purple: #8B5A9E;         /* muted plum */
-    --ember:  ##853701;         /* warm orange-brown */
+    --ember:  #853701;         /* warm orange-brown */
     --zotRed: #A52A2A;         /* dark brick red */
     --highlight: #93dcf999;
 
@@ -1030,6 +1030,14 @@ body {
     vertical-align: sub;
 }
 
+/* Live Preview: a horizontal rule (---) shows as a rule while the cursor is on another line */
+.cm-md-hr {
+    display: inline-block;
+    width: 100%;
+    color: transparent !important;   /* beats CodeMirror's default-theme colours, like .cm-md-syntax does */
+    background: linear-gradient(var(--border-light), var(--border-light)) center / 100% 1px no-repeat;
+}
+
 .cm-s-default .cm-quote {
     color: var(--text-dim) !important;
     font-style: italic;
@@ -1069,7 +1077,7 @@ body {
     font-weight: var(--note-weight-body);
     line-height: 1.75;
     color: var(--text);
-    padding: 40px 40px;
+    padding: 40px 44px;
 }
 
 .preview-content h1,.preview-content h2,.preview-content h3, .preview-content h4,.preview-content h5,.preview-content h6 {
@@ -2057,3 +2065,140 @@ notebook-entry {
     color: var(--text-dim) !important;
     font-style: italic;
 }
+
+
+/* ═════════════════════════════════════════════════════════════════════════════
+   NEW NOTEBOOK / MOVE TO SECTION — paste this block at the very END of looks.css.
+   Reuses the Settings dialog's header, footer and button classes, so only the
+   dialog frame and the destination tree are new. Uses variables both themes define.
+   ═════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Move to Section dialog ───────────────────────────────────────────────────
+   Same frame as #settings-dialog.                                               */
+#move-dialog {
+    background: var(--surface2);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius);
+    padding: 0;
+    width: 400px;
+    max-width: 92vw;
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 13px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    margin: auto;
+}
+
+#move-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.4);
+}
+
+.move-body {
+    padding: 14px 18px 16px;
+}
+
+.move-hint {
+    color: var(--text-dim);
+    margin-bottom: 10px;
+    overflow-wrap: anywhere;
+}
+
+/* ── The destination tree ──────────────────────────────────────────────────── */
+.move-tree {
+    max-height: 46vh;
+    overflow-y: auto;
+    padding: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.move-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 10px;          /* left padding is overridden per level by the script */
+    border-radius: 4px;
+    color: var(--text);
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--transition), color var(--transition);
+}
+
+.move-row:hover {
+    background: var(--bg-hover);
+}
+
+.move-row.selected {
+    background: var(--accent-glow);
+    color: var(--text-bright);
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.move-row.move-disabled {
+    color: var(--text-dim);
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.move-row.move-disabled:hover {
+    background: transparent;
+}
+
+.move-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Chevron: drawn with borders so it follows the text colour */
+.move-chev {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    color: var(--text-dim);
+}
+
+.move-chev::before {
+    content: "";
+    width: 5px;
+    height: 5px;
+    border: solid currentColor;
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg) translate(-1px, -1px);
+    transition: transform var(--transition);
+}
+
+.move-chev.leaf {
+    visibility: hidden;         /* keeps leaf rows aligned with expandable ones */
+}
+
+.move-group.collapsed > .move-row .move-chev::before {
+    transform: rotate(-45deg) translate(-1px, -1px);
+}
+
+.move-group.collapsed > .move-children {
+    display: none;
+}
+
+
+/* ── Heading height parity with Live Preview ────────────────────────────────
+   Part 1: in the editor, every heading sits on a line that also contains
+   body-sized text, so it is never shorter than a body line. A zero-width,
+   body-sized strut inside each Preview heading reproduces that.            */
+.preview-content h1::before, .preview-content h2::before, .preview-content h3::before,
+.preview-content h4::before, .preview-content h5::before, .preview-content h6::before {
+    content: "\200b";
+    font-family: var(--note-font-body);
+    font-size: var(--note-size-body);
+    font-weight: var(--note-weight-body);
+    line-height: 1.75;
+}
+
+/* Part 2 (optional): H4–H6 sized and spaced exactly as the editor shows them */
+.preview-content h4 { font-size: 1.05em; font-weight: 600; line-height: 1.75; }
+.preview-content h5 { font-size: 0.95em; font-weight: 600; line-height: 1.75; }
+.preview-content h6 { font-size: 0.90em; font-weight: 600; line-height: 1.75; }

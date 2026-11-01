@@ -310,6 +310,15 @@ class SectionTabs extends HTMLElement {
             // sec.name — used by the sub-section row's "Pages" pseudo-tab,
             // whose real name is the PAGES_PSEUDO_TAB sentinel.
             tab.textContent = sec.label || sec.name;
+            tab.dataset.name = sec.name;
+            // Right-click: the app shows its shared context menu (Rename / Delete) at the pointer
+            tab.addEventListener('contextmenu', e => {
+                e.preventDefault();
+                this.dispatchEvent(new CustomEvent('tab-contextmenu', {
+                    bubbles: true, composed: true,
+                    detail: { name: sec.name, x: e.clientX, y: e.clientY }
+                }));
+            });
             tab.addEventListener('click', () => {
                 this.dispatchEvent(new CustomEvent(this._changeEvent,{
                     bubbles: true,
@@ -333,6 +342,30 @@ class SectionTabs extends HTMLElement {
         bar.appendChild(addBtn);
     }
 
+    /** Shared inline text box used by both "add" and "rename". It sits inside `host` (a .tab),
+     *  and exactly one of onCommit(value) / onCancel() fires: Enter or blur commits, Escape cancels. */
+    _inlineInput(host, initial, onCommit, onCancel) {
+        const input = document.createElement('input');
+        input.className = 'new-tab-input';
+        input.value = initial;
+        input.spellcheck = false;
+        host.appendChild(input);
+
+        let done = false;
+        const finish = commit => {
+            if (done) return;
+            done = true;
+            commit ? onCommit(input.value) : onCancel();
+        };
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter')  { e.preventDefault(); finish(true); }
+            if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+        });
+        input.addEventListener('blur', () => finish(true));
+
+        setTimeout(() => { input.select(); input.focus(); }, 30);
+    }
+
     _startAddSection() {
         const bar = this.shadowRoot.querySelector('.bar');
         // Prevent opening a second input if one is already active
@@ -341,57 +374,36 @@ class SectionTabs extends HTMLElement {
 
         const tempTab = document.createElement('div');
         tempTab.className = 'tab';
-
-        const input = document.createElement('input');
-        input.className = 'new-tab-input';
-        input.value = 'Untitled';
-        input.spellcheck = false;
-        tempTab.appendChild(input);
-
         // Slot it in before the + button
-        const addBtn = bar.querySelector('.add-section-btn');
-        bar.insertBefore(tempTab, addBtn);
+        bar.insertBefore(tempTab, bar.querySelector('.add-section-btn'));
 
-        let committed = false;
-        const commit = () => {
-            if (committed)
-                return;
-            committed = true;
-            const name = input.value.trim() || 'Untitled';
-            tempTab.remove();
-            this.dispatchEvent(new CustomEvent(this._addEvent,{
-                bubbles: true,
-                composed: true,
-                detail: {
-                    name
-                }
-            }));
-        }
-        ;
-        const cancel = () => {
-            committed = true;
-            tempTab.remove();
-        }
-        ;
+        this._inlineInput(tempTab, 'Untitled',
+            value => {
+                const name = value.trim() || 'Untitled';
+                tempTab.remove();
+                this.dispatchEvent(new CustomEvent(this._addEvent, { bubbles: true, composed: true, detail: { name } }));
+            },
+            () => tempTab.remove());
+    }
 
-        input.addEventListener('keydown', e => {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                commit();
-            }
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                cancel();
-            }
-        }
-        );
-        input.addEventListener('blur', commit);
-
-        setTimeout( () => {
-            input.select();
-            input.focus();
-        }
-        , 30);
+    /** Rename in place: the tab turns into a text box. Called by the app from the context menu.
+     *  Fires tab-rename { oldName, newName }; the app renames the folder and re-renders the tabs. */
+    startRename(name) {
+        const bar = this.shadowRoot.querySelector('.bar');
+        if (!bar || bar.querySelector('.new-tab-input'))
+            return;
+        const tab = [...bar.querySelectorAll('.tab')].find(t => t.dataset.name === name);
+        if (!tab)
+            return;
+        tab.textContent = '';
+        this._inlineInput(tab, name,
+            value => {
+                const newName = value.trim();
+                this._render();   // restore the tab at once; the app re-renders again after the folder is renamed
+                if (newName && newName !== name)
+                    this.dispatchEvent(new CustomEvent('tab-rename', { bubbles: true, composed: true, detail: { oldName: name, newName } }));
+            },
+            () => this._render());
     }
 }
 customElements.define('section-tabs', SectionTabs);

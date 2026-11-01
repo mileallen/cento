@@ -159,6 +159,85 @@ async function resolveDir(rootHandle, folderPath) {
     return dir;
 }
 
+// ── Copy / move helpers ──────────────────────────────────────────────────────
+// The File System Access API has no rename or move for directories, so a folder
+// is "moved" by copying it, checking the copy, and only then deleting the original.
+
+/** True if dir already holds an entry called `name` (case-insensitive, as on Windows). */
+async function entryExists(dir, name) {
+    for await (const [n] of dir.entries())
+        if (n.toLowerCase() === name.toLowerCase()) return true;
+    return false;
+}
+
+/** Copy one file (binary-safe, so images and PDFs survive) into dstDir as `name`. */
+async function copyFileInto(srcFh, dstDir, name) {
+    const file = await srcFh.getFile();
+    const dst  = await dstDir.getFileHandle(name, { create: true });
+    const w    = await dst.createWritable();
+    await w.write(file);
+    await w.close();
+    return dst;
+}
+
+/** Copy everything inside srcDir into the (existing) dstDir. */
+async function copyContents(srcDir, dstDir) {
+    for await (const [n, entry] of srcDir.entries()) {
+        if (entry.kind === 'file') {
+            await copyFileInto(entry, dstDir, n);
+        } else {
+            const sub = await dstDir.getDirectoryHandle(n, { create: true });
+            await copyContents(entry, sub);
+        }
+    }
+}
+
+/** { entries, bytes } of a whole directory tree, used to verify a copy. */
+async function treeStats(dir) {
+    let entries = 0, bytes = 0;
+    for await (const [, e] of dir.entries()) {
+        entries++;
+        if (e.kind === 'file') bytes += (await e.getFile()).size;
+        else { const s = await treeStats(e); entries += s.entries; bytes += s.bytes; }
+    }
+    return { entries, bytes };
+}
+
+/** Copy srcParent/name to dstParent/newName and verify it. The original is NOT touched.
+ *  A failed or mismatching copy is removed again before the error is thrown. */
+async function copyDirVerified(srcParent, name, dstParent, newName) {
+    if (await entryExists(dstParent, newName)) throw new Error(`"${newName}" already exists there`);
+    const src = await srcParent.getDirectoryHandle(name);
+    const dst = await dstParent.getDirectoryHandle(newName, { create: true });
+    try {
+        await copyContents(src, dst);
+        const [a, b] = [await treeStats(src), await treeStats(dst)];
+        if (a.entries !== b.entries || a.bytes !== b.bytes)
+            throw new Error('the copy did not match the original, so nothing was deleted');
+    } catch (e) {
+        await dstParent.removeEntry(newName, { recursive: true }).catch(() => {});
+        throw e;
+    }
+    return dst;
+}
+
+/** Rename a folder in place. A case-only change ("notes" → "Notes") goes through a
+ *  temporary name: on a case-insensitive disk the two names are the same folder, and a
+ *  plain copy-then-delete would copy it onto itself and then delete it. */
+async function renameDirectory(parent, oldName, newName) {
+    const step = async (from, to) => {
+        const dst = await copyDirVerified(parent, from, parent, to);
+        await parent.removeEntry(from, { recursive: true });
+        return dst;
+    };
+    if (oldName.toLowerCase() === newName.toLowerCase()) {
+        const tmp = `${newName}.cento-tmp-${Date.now()}`;
+        await step(oldName, tmp);
+        return step(tmp, newName);
+    }
+    return step(oldName, newName);
+}
+
 async function uniqueFilename(dirHandle, base = 'Untitled') {
     const existing = [];
     for await (const [n] of dirHandle.entries()) existing.push(n);
@@ -245,7 +324,7 @@ function decorateLine(cm, lineNo, text, cursorCh, blockState) {
         mk(inRange ? 0 : 2, text.length, 'cm-md-blockquote');
         return;
     }
-    if (/^---+$/.test(text.trim())) { mk(0, text.length, 'cm-md-syntax'); return; }
+    if (/^---+$/.test(text.trim())) { mk(0, text.length, cursorCh >= 0 ? 'cm-md-syntax' : 'cm-md-hr'); return; }
     applyInline(cm, lineNo, text, cursorCh);
 }
 
@@ -377,6 +456,9 @@ const App = {
     _navigating:      false,// true while executing a back/forward jump (suppress push)
     _ctxNode:         null,
     _ctxKind:         null,
+    _ctxTab:          null,   // { level: 'section' | 'subsection', name } while the menu is open on a tab
+    _moveNode:        null,   // page being moved by the Move to Section dialog
+    _moveDest:        null,   // destination picked in that dialog
     _settingsDraft:   null,   // working copy of typography edited inside the Settings dialog
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -394,6 +476,10 @@ const App = {
             .addEventListener('click', () => this.openFileInDrawer());
         document.getElementById('btn-open-file-welcome')
             .addEventListener('click', () => this.openFileInDrawer());
+        document.getElementById('btn-new-notebook')
+            ?.addEventListener('click', () => this.newNotebook());
+        document.getElementById('btn-new-notebook-welcome')
+            ?.addEventListener('click', () => this.newNotebook());
         document.getElementById('btn-new-page')
             .addEventListener('click', () => this.newPage());
         document.getElementById('btn-sidebar-notebooks')
@@ -466,6 +552,18 @@ const App = {
             this._openDefaultPageForSection(this.activeSection);
         });
         subsectionTabsEl.addEventListener('subsection-add', e => this.addSubsection(e.detail.name));
+
+        // Right-click on a section / sub-section tab → the shared context menu; and rename results.
+        // The "Unfiled" and "Pages" pseudo-tabs aren't folders, so they get no menu.
+        const onTabMenu = level => e => {
+            const name = e.detail.name;
+            if (name === 'Unfiled' || name === PAGES_PSEUDO_TAB) return;
+            this._showContextMenu(e, { kind: 'tab', tab: { level, name } });
+        };
+        sectionTabsEl.addEventListener('tab-contextmenu', onTabMenu('section'));
+        subsectionTabsEl.addEventListener('tab-contextmenu', onTabMenu('subsection'));
+        sectionTabsEl.addEventListener('tab-rename', e => this.renameTab('section', e.detail.oldName, e.detail.newName));
+        subsectionTabsEl.addEventListener('tab-rename', e => this.renameTab('subsection', e.detail.oldName, e.detail.newName));
 
         // ── Page list (custom element events) ────────────────────────────────
         const pageListEl = document.getElementById('page-list-component');
@@ -554,15 +652,21 @@ const App = {
                 this._showContextMenu(e, { kind: 'editor' });
         });
         document.getElementById('ctx-rename').addEventListener('click', () => {
-            const node = this._ctxNode; this._hideContextMenu();
+            const node = this._ctxNode, tab = this._ctxTab; this._hideContextMenu();
+            if (tab) { this._startTabRename(tab); return; }
             if (!node) return;
             // Set the renaming attribute on the matching <page-list-item>
             const item = document.querySelector(`page-list-item[page-path="${CSS.escape(node.path)}"]`);
             if (item) { this._renameCommitted = false; item.setAttribute('renaming', ''); }
         });
         document.getElementById('ctx-delete').addEventListener('click', () => {
+            const node = this._ctxNode, tab = this._ctxTab; this._hideContextMenu();
+            if (tab) this.deleteTab(tab);
+            else if (node) this.deleteNode(node);
+        });
+        document.getElementById('ctx-move')?.addEventListener('click', () => {
             const node = this._ctxNode; this._hideContextMenu();
-            if (node) this.deleteNode(node);
+            if (node) this.openMoveDialog(node);
         });
         document.getElementById('context-menu').addEventListener('click', e => {
             const item = e.target.closest('.ctx-editor-item');
@@ -588,6 +692,7 @@ const App = {
 
         // ── Settings modal ──────────────────────────────────────────────────
         this._initSettingsModal();
+        this._initMoveDialog();
         this._applyTypography();
 
         // ── File Handling API  (open .md files from OS file manager) ──────────
@@ -1630,16 +1735,28 @@ const App = {
         const menu = document.getElementById('context-menu');
         menu.querySelectorAll('.ctx-editor-item, .ctx-sep').forEach(el => el.remove());
 
+        const showMove = on => { const m = document.getElementById('ctx-move'); if (m) m.style.display = on ? '' : 'none'; };
         if (ctx.kind === 'node') {
             this._ctxNode = ctx.node;
+            this._ctxTab  = null;
             this._ctxKind = 'node';
             document.getElementById('ctx-rename').style.display = ctx.node.type === 'folder' ? 'none' : '';
             document.getElementById('ctx-delete').style.display = '';
+            showMove(ctx.node.type === 'page' && !!ctx.node.handle);
+        } else if (ctx.kind === 'tab') {
+            this._ctxNode = null;
+            this._ctxTab  = ctx.tab;
+            this._ctxKind = 'tab';
+            document.getElementById('ctx-rename').style.display = '';
+            document.getElementById('ctx-delete').style.display = '';
+            showMove(false);
         } else {
             this._ctxNode = null;
+            this._ctxTab  = null;
             this._ctxKind = 'editor';
             document.getElementById('ctx-rename').style.display = 'none';
             document.getElementById('ctx-delete').style.display = 'none';
+            showMove(false);
 
             const isPreview = this.editorMode === 'preview';
             const editorEl  = document.getElementById('editor');
@@ -1697,9 +1814,10 @@ const App = {
 
     _hideContextMenu() {
         document.getElementById('context-menu').classList.remove('show');
-        this._ctxNode = null; this._ctxKind = null;
+        this._ctxNode = null; this._ctxKind = null; this._ctxTab = null;
         document.getElementById('ctx-rename').style.display = '';
         document.getElementById('ctx-delete').style.display = '';
+        const mv = document.getElementById('ctx-move'); if (mv) mv.style.display = 'none';
     },
 
     _handleEditorCtxAction(action) {
@@ -2282,6 +2400,395 @@ const App = {
         } catch (e) {
             this.toast('Could not create sub-section: ' + e.message);
         }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // New notebook
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Choose an EMPTY folder (the system dialog's "New folder" button makes one) and turn it
+     *  into a notebook: a single unfiled page, "page-1", plus its .cento-notebook.json. */
+    async newNotebook() {
+        try {
+            const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+
+            for await (const _entry of handle.entries()) {
+                this.toast(`"${handle.name}" isn't empty. To use an existing folder as a notebook, choose Open Notebook instead.`, 6000);
+                return;
+            }
+            if (this.notebooks.some(n => n.name === handle.name)) {
+                this.toast(`A notebook named "${handle.name}" is already open. Please choose a folder with a different name.`, 6000);
+                return;
+            }
+
+            const pageName = 'page-1.md';
+            const pageFh   = await handle.getFileHandle(pageName, { create: true });
+            await writeFile(pageFh, '');
+
+            const id = await dbAddNotebook(handle.name, handle);
+            await this._mountNotebookRecord({ id, name: handle.name, handle });
+            await this.switchToNotebook(id);        // no saved page yet, so this only selects the "Unfiled" tab...
+            await this.openPage(pageName, pageFh);  // ...and we open page-1 ourselves
+            await this.saveNotebookSession(id);     // write .cento-notebook.json now rather than after the debounce
+        } catch (e) {
+            if (e.name !== 'AbortError') this.toast('Could not create notebook: ' + e.message);
+        }
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Shared bookkeeping for anything that renames / moves / deletes files
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Write out unsaved edits first, so they can't be lost or land on a stale file handle. */
+    async _flushActivePage() {
+        clearTimeout(this._saveTimer);
+        if (this.activePageDirty && this.activePageHandle && !this.activeIsDrawer) await this.saveActivePage();
+    },
+
+    /** Rewrite every saved reference to paths under oldPrefix so they point under newPrefix:
+     *  the open page, per-page editor state, expanded pages, last-page-per-tab, and history. */
+    _remapNotebookPaths(nb, oldPrefix, newPrefix) {
+        const map = p => (typeof p === 'string' && (p === oldPrefix || p.startsWith(oldPrefix + '/')))
+            ? newPrefix + p.slice(oldPrefix.length) : p;
+        const s = nb.session = nb.session || {};
+        if (s.pageStates)    s.pageStates    = Object.fromEntries(Object.entries(s.pageStates).map(([k, v]) => [map(k), v]));
+        if (s.expandedPages) s.expandedPages = s.expandedPages.map(map);
+        if (s.sectionLastPage) {
+            // Keys are tab paths ("Section" / "Section/Sub"), values are page paths. When a folder is
+            // renamed both change together; when a page moves out of a tab only the value changes,
+            // and that stale entry is dropped (it would otherwise open a page from another tab).
+            const out = {};
+            for (const [k, v] of Object.entries(s.sectionLastPage)) {
+                const nk = map(k), nv = map(v);
+                if ((nk !== k) === (nv !== v)) out[nk] = nv;
+            }
+            s.sectionLastPage = out;
+        }
+        if (this.activeNotebookId === nb.id && this.activePage) this.activePage = map(this.activePage);
+        this._navHistory.forEach(h => { if (h.notebookId === nb.id) h.pagePath = map(h.pagePath); });
+    },
+
+    /** After a rescan the old file handles are dead: re-resolve the open page's and history's. */
+    _repairHandles(nb) {
+        if (this.activeNotebookId === nb.id && this.activePage && !this.activeIsDrawer) {
+            const n = this._findPageByPath(nb, this.activePage);
+            if (n?.handle) this.activePageHandle = n.handle;
+        }
+        for (const h of this._navHistory) {
+            if (h.notebookId !== nb.id) continue;
+            const n = this._findPageByPath(nb, h.pagePath);
+            if (n?.handle) h.handle = n.handle;
+        }
+    },
+
+    /** Remove history entries for pages under pathPrefix (they no longer exist). */
+    _dropHistory(nb, pathPrefix) {
+        const gone = h => h.notebookId === nb.id && (h.pagePath === pathPrefix || h.pagePath.startsWith(pathPrefix + '/'));
+        let idx = this._navIndex;
+        const kept = [];
+        this._navHistory.forEach((h, i) => { if (gone(h)) { if (i <= this._navIndex) idx--; } else kept.push(h); });
+        this._navHistory = kept;
+        this._navIndex = kept.length ? Math.min(Math.max(idx, 0), kept.length - 1) : -1;
+    },
+
+    /** If the active section / sub-section no longer exists, fall back to one that does. */
+    _ensureValidActiveSection(nb) {
+        const sec = nb.sections.find(s => s.name === this.activeSection);
+        const ok  = this.activeSection === 'Unfiled' ? nb.unfiledPages.length > 0 : !!sec;
+        if (!ok) {
+            const first = nb.sections[0]?.name || (nb.unfiledPages.length ? 'Unfiled' : null);
+            this.activeSection    = first;
+            this.activeSubsection = first && first !== 'Unfiled' ? this._resolveActiveSubsection(nb, first) : null;
+            return;
+        }
+        if (sec && this.activeSubsection && !sec.subsections?.some(s => s.name === this.activeSubsection))
+            this.activeSubsection = null;   // the sub-section vanished: fall back to the section's own "Pages" tab
+    },
+
+    /** The usual refresh after files changed on disk. */
+    async _refreshAfterFsChange(nb) {
+        await this._scanNotebook(nb);
+        this._repairHandles(nb);
+        this._ensureValidActiveSection(nb);
+        this.renderSectionTabs(nb.id);
+        this.renderSubsectionTabs(nb.id);
+        this.renderPageList(this.activeSection, this.activeSubsection);
+        this._renderNavButtons();
+        this.scheduleNotebookSessionSave(nb.id);
+    },
+
+    _countPages(nodes) {
+        return (nodes || []).reduce((n, p) => n + (p.type === 'page' ? 1 : 0) + this._countPages(p.children), 0);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Section / sub-section tabs: rename and delete  (the tab IS a folder)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _startTabRename({ level, name }) {
+        document.getElementById(level === 'section' ? 'section-tabs-el' : 'subsection-tabs-el')?.startRename(name);
+    },
+
+    async renameTab(level, oldName, newName) {
+        newName = (newName || '').trim();
+        if (!newName || newName === oldName) return;
+        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        if (!nb) return;
+        const kind = level === 'section' ? 'section' : 'sub-section';
+
+        if (/[\\/:*?"<>|]/.test(newName) || newName.startsWith('.') || /[. ]$/.test(newName)) {
+            this.toast(`A ${kind} name can't contain \\ / : * ? " < > |, start with a dot, or end with a dot or space.`, 5000);
+            return;
+        }
+        const section  = level === 'section' ? null : nb.sections.find(s => s.name === this.activeSection);
+        const siblings = level === 'section' ? nb.sections : (section?.subsections || []);
+        const entry    = siblings.find(s => s.name === oldName);
+        if (!entry) return;
+        if (siblings.some(s => s !== entry && s.name.toLowerCase() === newName.toLowerCase())) {
+            this.toast(`A ${kind} named "${newName}" already exists.`);
+            return;
+        }
+
+        await this._flushActivePage();
+        const parent  = level === 'section' ? nb.handle : section.handle;
+        const oldPath = entry.path;
+        const newPath = level === 'section' ? newName : `${section.name}/${newName}`;
+        try {
+            await renameDirectory(parent, oldName, newName);
+        } catch (e) {
+            this.toast('Rename failed: ' + e.message, 5000);
+            await this._refreshAfterFsChange(nb);
+            return;
+        }
+
+        // Keep every saved reference pointing at the renamed folder
+        this._remapNotebookPaths(nb, oldPath, newPath);
+        const s = nb.session = nb.session || {};
+        if (level === 'section') {
+            if (this.activeSection === oldName) this.activeSection = newName;
+            if (s.sectionLastSubsection && oldName in s.sectionLastSubsection) {
+                s.sectionLastSubsection[newName] = s.sectionLastSubsection[oldName];
+                delete s.sectionLastSubsection[oldName];
+            }
+            this._navHistory.forEach(h => { if (h.notebookId === nb.id && h.section === oldName) h.section = newName; });
+        } else {
+            if (this.activeSection === section.name && this.activeSubsection === oldName) this.activeSubsection = newName;
+            if (s.sectionLastSubsection?.[section.name] === oldName) s.sectionLastSubsection[section.name] = newName;
+            this._navHistory.forEach(h => {
+                if (h.notebookId === nb.id && h.section === section.name && h.subsection === oldName) h.subsection = newName;
+            });
+        }
+        await this._refreshAfterFsChange(nb);
+        this.toast(`Renamed to "${newName}".`);
+    },
+
+    async deleteTab({ level, name }) {
+        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        if (!nb) return;
+        const section = level === 'section' ? null : nb.sections.find(s => s.name === this.activeSection);
+        const entry   = (level === 'section' ? nb.sections : (section?.subsections || [])).find(s => s.name === name);
+        if (!entry) return;
+
+        const pages = level === 'section'
+            ? this._countPages([...entry.pages, ...(entry.subsections || []).flatMap(s => s.pages)])
+            : this._countPages(entry.pages);
+        const kind = level === 'section' ? 'section' : 'sub-section';
+        if (!await this._confirm(`Permanently delete ${kind} "${name}" and everything in it (${pages} page${pages === 1 ? '' : 's'})? This cannot be undone.`)) return;
+
+        const parent    = level === 'section' ? nb.handle : section.handle;
+        const hadActive = !!this.activePage && !this.activeIsDrawer &&
+                          (this.activePage === entry.path || this.activePage.startsWith(entry.path + '/'));
+        clearTimeout(this._saveTimer);
+        try {
+            await parent.removeEntry(name, { recursive: true });
+        } catch (e) {
+            this.toast('Delete failed: ' + e.message, 5000);
+            return;
+        }
+
+        // Forget everything saved about the deleted folder
+        const s     = nb.session = nb.session || {};
+        const under = p => typeof p === 'string' && (p === entry.path || p.startsWith(entry.path + '/'));
+        if (s.pageStates)      for (const k of Object.keys(s.pageStates)) if (under(k)) delete s.pageStates[k];
+        if (s.expandedPages)   s.expandedPages = s.expandedPages.filter(p => !under(p));
+        if (s.sectionLastPage) for (const [k, v] of Object.entries(s.sectionLastPage)) if (under(k) || under(v)) delete s.sectionLastPage[k];
+        if (s.sectionLastSubsection) {
+            if (level === 'section') delete s.sectionLastSubsection[name];
+            else if (s.sectionLastSubsection[section.name] === name) delete s.sectionLastSubsection[section.name];
+        }
+        this._dropHistory(nb, entry.path);
+
+        if (hadActive) {
+            this.activePage = null; this.activePageHandle = null; this.activePageDirty = false;
+            document.getElementById('editor').style.display = 'none';
+            document.getElementById('welcome').style.display = '';
+        }
+        if (level === 'subsection' && this.activeSubsection === name) this.activeSubsection = null;
+
+        await this._refreshAfterFsChange(nb);
+        this._renderToolbar();
+        if (hadActive && this.activeSection) await this._openDefaultPageForSection(this.activeSection);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Move a page to another section / sub-section
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** The folder paired with this page (Foo.md + Foo/), or null. Pairing only exists inside
+     *  sub-sections: at the notebook root and section top level a folder is a section / sub-section. */
+    async _pairedDir(nb, node) {
+        const parent = node.path.includes('/') ? node.path.slice(0, node.path.lastIndexOf('/')) : '';
+        if (!parent.includes('/')) return null;
+        try { return await (await resolveDir(nb.handle, parent)).getDirectoryHandle(node.title); }
+        catch { return null; }
+    },
+
+    _initMoveDialog() {
+        const dialog = document.getElementById('move-dialog');
+        if (!dialog) return;
+        const close = () => dialog.close();
+        document.getElementById('btn-move-close')?.addEventListener('click', close);
+        document.getElementById('btn-move-cancel')?.addEventListener('click', close);
+        dialog.addEventListener('click', e => { if (e.target === dialog) close(); });
+        document.getElementById('btn-move-confirm')?.addEventListener('click', () => {
+            const node = this._moveNode, dest = this._moveDest;
+            close();
+            if (node && dest) this.movePage(node, dest);
+        });
+    },
+
+    /** Show the destination tree: Unfiled, then each section with its sub-sections. */
+    async openMoveDialog(node) {
+        const nb     = this.notebooks.find(n => n.id === this.activeNotebookId);
+        const dialog = document.getElementById('move-dialog');
+        if (!nb || !node?.handle || !dialog) return;
+        const tree    = document.getElementById('move-tree');
+        const confirm = document.getElementById('btn-move-confirm');
+
+        const hasChildren = !!(await this._pairedDir(nb, node));
+        const here = node.path.includes('/') ? node.path.slice(0, node.path.lastIndexOf('/')) : '';
+
+        this._moveNode = node; this._moveDest = null; confirm.disabled = true;
+        document.getElementById('move-page-name').textContent = `Move \u201C${node.title}\u201D to:`;
+        tree.innerHTML = '';
+
+        const makeRow = (dest, depth, collapsible) => {
+            const row = document.createElement('div');
+            row.className = 'move-row';
+            row.style.paddingLeft = (10 + depth * 18) + 'px';
+            const chev = document.createElement('span');
+            chev.className = 'move-chev' + (collapsible ? '' : ' leaf');
+            const label = document.createElement('span');
+            label.className = 'move-label';
+            label.textContent = dest.name;
+            row.append(chev, label);
+
+            let why = '';
+            if (dest.path === here) why = 'The page is already here';
+            else if (hasChildren && !dest.path.includes('/')) why = 'A page with sub-pages can only move into a sub-section';
+            if (why) {
+                row.classList.add('move-disabled');
+                row.title = why;
+            } else {
+                row.addEventListener('click', () => {
+                    tree.querySelectorAll('.move-row.selected').forEach(r => r.classList.remove('selected'));
+                    row.classList.add('selected');
+                    this._moveDest = dest;
+                    confirm.disabled = false;
+                });
+            }
+            if (collapsible) chev.addEventListener('click', e => { e.stopPropagation(); row.parentElement.classList.toggle('collapsed'); });
+            return row;
+        };
+
+        tree.appendChild(makeRow({ name: 'Unfiled', label: 'Unfiled', path: '', handle: nb.handle, section: 'Unfiled', sub: null }, 0, false));
+        for (const sec of nb.sections) {
+            const subs  = sec.subsections || [];
+            const group = document.createElement('div');
+            group.className = 'move-group';
+            group.appendChild(makeRow({ name: sec.name, label: sec.name, path: sec.path, handle: sec.handle, section: sec.name, sub: null }, 0, subs.length > 0));
+            if (subs.length) {
+                const kids = document.createElement('div');
+                kids.className = 'move-children';
+                subs.forEach(sub => kids.appendChild(makeRow(
+                    { name: sub.name, label: `${sec.name} / ${sub.name}`, path: sub.path, handle: sub.handle, section: sec.name, sub: sub.name }, 1, false)));
+                group.appendChild(kids);
+            }
+            tree.appendChild(group);
+        }
+        dialog.showModal();
+    },
+
+    async movePage(node, dest) {
+        const nb = this.notebooks.find(n => n.id === this.activeNotebookId);
+        if (!nb || !node?.handle) return;
+
+        const srcPath   = node.path;
+        const srcParent = srcPath.includes('/') ? srcPath.slice(0, srcPath.lastIndexOf('/')) : '';
+        if (srcParent === dest.path) { this.toast('That page is already there.'); return; }
+
+        const pairedDir = await this._pairedDir(nb, node);
+        if (pairedDir && !dest.path.includes('/')) {
+            this.toast('A page with sub-pages can only move into a sub-section.', 5000);
+            return;
+        }
+
+        const wasOpen = !!this.activePage && !this.activeIsDrawer && this.activePage === srcPath;
+        await this._flushActivePage();
+
+        // Pick a name that clashes with nothing at the destination. Inside a sub-section a same-named
+        // FOLDER also counts: it would silently become this page's children (Foo.md + Foo/ pair up).
+        const taken = new Set();
+        for await (const [n] of dest.handle.entries()) taken.add(n.toLowerCase());
+        const folderClash = dest.path.includes('/');
+        let newTitle = node.title, i = 1;
+        while (taken.has(`${newTitle}.md`.toLowerCase()) || (folderClash && taken.has(newTitle.toLowerCase())))
+            newTitle = `${node.title} ${i++}`;
+        const newName = `${newTitle}.md`;
+
+        // 1. Copy (and verify). Nothing has been deleted yet, so a failure here loses nothing.
+        let srcDir, createdFile = false;
+        try {
+            srcDir = await resolveDir(nb.handle, srcParent);
+            const srcFh = await srcDir.getFileHandle(node.name);
+            const newFh = await copyFileInto(srcFh, dest.handle, newName);
+            createdFile = true;
+            if ((await newFh.getFile()).size !== (await srcFh.getFile()).size)
+                throw new Error('the copy did not match the original, so nothing was deleted');
+            if (pairedDir) await copyDirVerified(srcDir, node.title, dest.handle, newTitle);
+        } catch (e) {
+            if (createdFile) await dest.handle.removeEntry(newName).catch(() => {});
+            this.toast('Move failed: ' + e.message, 5000);
+            return;
+        }
+
+        // 2. Only now remove the originals.
+        try {
+            await srcDir.removeEntry(node.name);
+            if (pairedDir) await srcDir.removeEntry(node.title, { recursive: true });
+        } catch (e) {
+            this.toast('The page was copied, but the original could not be removed: ' + e.message, 6000);
+            await this._refreshAfterFsChange(nb);
+            return;
+        }
+
+        // 3. Point every saved reference at the new location.
+        const destPrefix = dest.path ? dest.path + '/' : '';
+        const newPath    = `${destPrefix}${newName}`;
+        this._remapNotebookPaths(nb, srcPath, newPath);
+        if (pairedDir) this._remapNotebookPaths(nb, srcPath.replace(/\.md$/, ''), `${destPrefix}${newTitle}`);
+        const moved = p => p === newPath || (!!pairedDir && p.startsWith(`${destPrefix}${newTitle}/`));
+        this._navHistory.forEach(h => { if (h.notebookId === nb.id && moved(h.pagePath)) { h.section = dest.section; h.subsection = dest.sub; } });
+
+        if (wasOpen) {   // follow the open page, so it stays visible in the page list
+            this.activeSection = dest.section;
+            this.activeSubsection = dest.sub;
+            this._rememberLastSubsection(dest.section, dest.sub);
+            nb.session.sectionLastPage = nb.session.sectionLastPage || {};
+            nb.session.sectionLastPage[this._subsectionKey(dest.section, dest.sub)] = newPath;
+        }
+        await this._refreshAfterFsChange(nb);
+        this.toast(`Moved \u201C${node.title}\u201D to ${dest.label}.`);
     },
 
 };
