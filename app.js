@@ -390,12 +390,11 @@ const App = {
     // ── State ──────────────────────────────────────────────────────────────────
     // Each notebook in the array: { id, name, handle, sections, unfiledPages, session }
     // sections: [{ name, handle, path, pages, subsections }]
-    //   - pages       : recursive PageNode tree of .md files directly in the section
+    //   - pages       : the .md files directly in the section
     //   - subsections : [{ name, handle, path, pages }] — folders one level deep
-    //                    inside the section. Each subsection.pages is itself a
-    //                    recursive PageNode tree (the paired-directory pattern
-    //                    still applies at deeper levels inside a sub-section).
-    // PageNode : { name, title, path, handle, type:'page'|'group', children:[] }
+    //                    inside the section. subsection.pages is EVERY .md file anywhere
+    //                    under that folder (deeper folders are not part of the hierarchy).
+    // PageNode : { name, title, path, handle } — a flat list; no nesting.
     notebooks:        [],
     activeNotebookId: null,
     activeSection:    null,   // section name string, or 'Unfiled'
@@ -432,6 +431,21 @@ const App = {
     _moveNode:        null,   // page being moved by the Move to Section dialog
     _moveDest:        null,   // destination picked in that dialog
     _settingsDraft:   null,   // working copy of typography edited inside the Settings dialog
+
+    /** Make a section the active one — what clicking its tab does. `openDefault: false` skips opening
+     *  the section's last/first page (used when a new page is about to be created there anyway). */
+    _selectSection(sectionName, { openDefault = true } = {}) {
+        const nb = this.activeNotebook;
+        this.activeSection = sectionName;
+        // Restore the section's last-active sub-section, or default to its first (null if it has none)
+        this.activeSubsection = nb ? this._resolveActiveSubsection(nb, sectionName) : null;
+        this._rememberLastSubsection(this.activeSection, this.activeSubsection);
+        this.renderSectionTabs(this.activeNotebookId);      // update active highlight
+        this.renderSubsectionTabs(this.activeNotebookId);   // show/hide + update sub row
+        this.renderPageList(this.activeSection, this.activeSubsection);
+        this.scheduleNotebookSessionSave(this.activeNotebookId);
+        if (openDefault) this._openDefaultPageForSection(sectionName);
+    },
 
     get activeNotebook() { return this.notebooks.find(n => n.id === this.activeNotebookId); },
 
@@ -486,20 +500,7 @@ const App = {
 
         // ── Section tabs (custom element events) ─────────────────────────────
         const sectionTabsEl = $('section-tabs-el');
-        sectionTabsEl.addEventListener('section-change', e => {
-            const nb = this.activeNotebook;
-            this.activeSection = e.detail.section;
-            // Resolve the active sub-section for the newly-selected section:
-            // restore the last-active sub-section from session, or default to
-            // the first sub-section (or null if the section has no sub-sections).
-            this.activeSubsection = nb ? this._resolveActiveSubsection(nb, e.detail.section) : null;
-            this._rememberLastSubsection(this.activeSection, this.activeSubsection);
-            this.renderSectionTabs(this.activeNotebookId); // update active highlight
-            this.renderSubsectionTabs(this.activeNotebookId); // show/hide + update sub row
-            this.renderPageList(this.activeSection, this.activeSubsection);
-            this.scheduleNotebookSessionSave(this.activeNotebookId);
-            this._openDefaultPageForSection(e.detail.section);
-        });
+        sectionTabsEl.addEventListener('section-change', e => this._selectSection(e.detail.section));
         sectionTabsEl.addEventListener('section-add', e => this.addSection(e.detail.name));
 
         // ── Sub-section tabs (custom element events) ─────────────────────────
@@ -538,15 +539,6 @@ const App = {
             if (!nb) return;
             const node = this._findPageByPath(nb, e.detail.path);
             if (node?.handle) await this.openPage(e.detail.path, node.handle);
-        });
-        pageListEl.addEventListener('item-toggle', e => {
-            const nb = this.activeNotebook;
-            if (!nb) return;
-            const session = this._session(nb);
-            const set = new Set(session.expandedPages || []);
-            e.detail.expanded ? set.add(e.detail.path) : set.delete(e.detail.path);
-            session.expandedPages = [...set];
-            this.scheduleNotebookSessionSave(this.activeNotebookId);
         });
         pageListEl.addEventListener('page-contextmenu', e => {
             const nb = this.activeNotebook;
@@ -625,6 +617,12 @@ const App = {
             const node = this._ctxNode, tab = this._ctxTab; this._hideContextMenu();
             if (tab) this.deleteTab(tab);
             else if (node) this.deleteNode(node);
+        });
+        $('ctx-add-subsection').addEventListener('click', async () => {
+            const tab = this._ctxTab; this._hideContextMenu();
+            if (tab?.level !== 'section') return;
+            if (this.activeSection !== tab.name) this._selectSection(tab.name, { openDefault: false });
+            await this.addSubsection('Untitled');   // creates it with its first page already in rename mode
         });
         $('ctx-move')?.addEventListener('click', () => {
             const node = this._ctxNode; this._hideContextMenu();
@@ -846,19 +844,15 @@ const App = {
     // Notebook scanning
     // Builds the sections[] and unfiledPages[] on the notebook object.
     //
-    // Hierarchy:
+    // Hierarchy — three levels, nothing deeper:
     //   Notebook root
     //     ├─ <Section>/            (top-level directory → Section)
     //     │    ├─ Page.md          (direct page of the section)
-    //     │    ├─ <Sub-section>/   (folder one level deep → Sub-section)
-    //     │    │    └─ ...         (recursive PageNode tree, paired-directory pattern applies)
-    //     │    └─ ...
+    //     │    └─ <Sub-section>/   (folder one level deep → Sub-section)
+    //     │         ├─ Page.md
+    //     │         └─ <any deeper folders>/…   not sections: their .md files simply
+    //     │                                    count as pages of this sub-section
     //     └─ Page.md               (unfiled page at notebook root)
-    //
-    // The paired-directory pattern (Foo.md + Foo/ → Foo is a parent page with
-    // children) is NOT applied at the section's top level: any folder there is
-    // a sub-section, period. The pattern still works at deeper levels (inside
-    // sub-sections and inside page-paired directories) via _scanPageLevel.
     // ─────────────────────────────────────────────────────────────────────────
 
     /** One directory level: its .md files and its sub-folders (dot-names skipped), in listing order. */
@@ -872,8 +866,8 @@ const App = {
         return { files, dirs };
     },
 
-    _makePage(name, path, handle, children = []) {
-        return { name, title: name.replace(/\.md$/, ''), path, handle, type: 'page', children };
+    _makePage(name, path, handle) {
+        return { name, title: name.replace(/\.md$/, ''), path, handle };
     },
 
     async _scanNotebook(nb) {
@@ -888,10 +882,8 @@ const App = {
     },
 
     /**
-     * Scan a section's top level. .md files become the section's direct pages
-     * (NO paired-directory pairing at this level). Directories become sub-sections,
-     * each scanned with _scanPageLevel for their page trees (where the paired-
-     * directory pattern DOES apply at deeper levels).
+     * Scan a section's top level. .md files become the section's direct pages; each directory
+     * becomes a sub-section whose pages are every .md file anywhere beneath it.
      */
     async _scanSectionTopLevel(sectionHandle, sectionPath) {
         const { files, dirs } = await this._readDir(sectionHandle);
@@ -899,35 +891,18 @@ const App = {
         const subsections = [];
         for (const [name, dh] of dirs) {
             const path = `${sectionPath}/${name}`;
-            subsections.push({ name, handle: dh, path, pages: await this._scanPageLevel(dh, path) });
+            subsections.push({ name, handle: dh, path, pages: (await this._collectPages(dh, path)).sort(byTitle) });
         }
         return { pages, subsections: subsections.sort(byName) };
     },
 
-    /**
-     * Recursively scan one level of the page hierarchy.
-     * A .md file named "Foo.md" paired with a directory "Foo/" makes Foo a
-     * parent page — its children come from the paired directory.
-     * An unpaired directory becomes a non-clickable group header.
-     */
-    async _scanPageLevel(dirHandle, basePath) {
-        const { files, dirs } = await this._readDir(dirHandle);
-        const dirByName = new Map(dirs), paired = new Set(), pages = [];
-        for (const [fileName, fh] of files) {
-            const title = fileName.replace(/\.md$/, '');
-            let children = [];
-            if (dirByName.has(title)) {
-                paired.add(title);
-                children = await this._scanPageLevel(dirByName.get(title), joinPath(basePath, title));
-            }
-            pages.push(this._makePage(fileName, joinPath(basePath, fileName), fh, children));
-        }
-        for (const [dirName, dh] of dirs) {
-            if (paired.has(dirName)) continue;
-            const children = await this._scanPageLevel(dh, joinPath(basePath, dirName));
-            pages.push({ name: dirName, title: dirName, path: null, handle: null, type: 'group', children });
-        }
-        return pages.sort(byTitle);
+    /** Every .md file in `dir` and in all folders beneath it, as one flat list. Folders deeper than
+     *  a sub-section are not part of the hierarchy — only the notes inside them count. */
+    async _collectPages(dir, basePath) {
+        const { files, dirs } = await this._readDir(dir);
+        const pages = files.map(([name, fh]) => this._makePage(name, joinPath(basePath, name), fh));
+        for (const [name, dh] of dirs) pages.push(...await this._collectPages(dh, joinPath(basePath, name)));
+        return pages;
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1027,7 +1002,6 @@ const App = {
             rightSidebarWidth:this.rightSidebarWidth,
             outlineVisible:   this.outlineVisible,
             typography:       this.typography,
-            expandedPages:    nb.session?.expandedPages    || [],
             sectionLastPage:  nb.session?.sectionLastPage  || {},
             sectionLastSubsection: nb.session?.sectionLastSubsection || {},
             pageStates:       nb.session?.pageStates       || {},
@@ -1139,19 +1113,13 @@ const App = {
         const node = this._findPageByPath(nb, pagePath);
         if (!node?.handle) return;
 
-        const newName  = newTitle.trim().replace(/\.md$/, '') + '.md';
+        const newName = newTitle.trim().replace(/\.md$/, '') + '.md';
         if (newName === node.name) return;
-        const newBase  = newName.replace(/\.md$/, '');
 
         const parent = parentPath(pagePath);
         try {
             const dirHandle = parent ? await resolveDir(nb.handle, parent) : nb.handle;
             try { await dirHandle.getFileHandle(newName); this.toast('A file with that name already exists.'); return; } catch {}
-
-            // A page with sub-pages is Foo.md + Foo/ : the folder has to follow the rename,
-            // otherwise the sub-pages would turn into an unrelated group.
-            const paired = await this._pairedDir(nb, node);
-            if (paired && await entryExists(dirHandle, newBase)) { this.toast('A folder with that name already exists.'); return; }
 
             await this._flushActivePage();   // unsaved edits reach the file before it is copied
             const content = await readFile(node.handle);
@@ -1159,16 +1127,8 @@ const App = {
             await writeFile(newFh, content);
             await dirHandle.removeEntry(node.name);
 
-            let folderMoved = false;
-            if (paired) {
-                try { await renameDirectory(dirHandle, node.title, newBase); folderMoved = true; }
-                catch (e) { this.toast('The page was renamed, but its sub-pages folder could not be: ' + e.message, 6000); }
-            }
-
-            // Point every saved reference (open page, history, session) at the new names
-            const prefix  = joinPath(parent, '');
-            this._remapNotebookPaths(nb, pagePath, prefix + newName, { sameTab: true });
-            if (folderMoved) this._remapNotebookPaths(nb, pagePath.replace(/\.md$/, ''), prefix + newBase, { sameTab: true });
+            // Point every saved reference (open page, history, session) at the new name
+            this._remapNotebookPaths(nb, pagePath, joinPath(parent, newName), { sameTab: true });
             await this._refreshAfterFsChange(nb);   // also re-resolves the open page's file handle
         } catch (e) { this.toast('Rename failed: ' + e.message); }
     },
@@ -1191,7 +1151,7 @@ const App = {
             await dirHandle.removeEntry(node.name, { recursive: true });
         } catch (e) { this.toast('Delete failed: ' + e.message); return; }
 
-        this._forgetPaths(nb, node.path);   // saved editor state, expanded pages, last-page-per-tab
+        this._forgetPaths(nb, node.path);   // saved editor state, last-page-per-tab
         this._dropHistory(nb, node.path);   // Back/Forward must not point at a file that is gone
         if (hadActive) {
             this.activePage       = null;
@@ -1379,29 +1339,15 @@ const App = {
         if (!nb) return;
 
         const pages = this._getActivePages(nb, sectionName, subsection);
-        const expandedSet = new Set(nb.session?.expandedPages || []);
-        const items = this._buildPageItems(pages, 0, expandedSet);
-        items.forEach(item => listEl.appendChild(item));
+        pages.forEach(page => listEl.appendChild(this._buildPageItem(page)));
     },
 
-    /** Recursively build <page-list-item> DOM tree */
-    _buildPageItems(pages, depth, expandedSet) {
-        return pages.map(page => {
-            const item = document.createElement('page-list-item');
-            item.setAttribute('title', page.title);
-            item.setAttribute('depth', String(depth));
-            if (page.path)                    item.setAttribute('page-path', page.path);
-            if (page.children?.length)        item.setAttribute('has-children', '');
-            if (page.type === 'group')        item.setAttribute('is-group', '');
-            if (page.path && expandedSet?.has(page.path)) item.setAttribute('expanded', '');
-            if (page.path === this.activePage) item.setAttribute('active', '');
-
-            if (page.children?.length) {
-                this._buildPageItems(page.children, depth + 1, expandedSet)
-                    .forEach(child => item.appendChild(child));
-            }
-            return item;
-        });
+    _buildPageItem(page) {
+        const item = document.createElement('page-list-item');
+        item.setAttribute('title', page.title);
+        item.setAttribute('page-path', page.path);
+        if (page.path === this.activePage) item.setAttribute('active', '');
+        return item;
     },
 
     // ── Sub-section helpers ──────────────────────────────────────────────────
@@ -1528,7 +1474,6 @@ const App = {
                     }
                 } catch {}
             }
-            if (page.children?.length) await this._searchPages(page.children, query);
         }
     },
 
@@ -1605,7 +1550,7 @@ const App = {
     /** First page matching pred, as { node, section, subsection } (or null). */
     _findPage(nb, pred) {
         for (const root of this._pageRoots(nb)) {
-            const node = this._walkPages(root.pages, pred);
+            const node = root.pages.find(pred);
             if (node) return { node, section: root.section, subsection: root.subsection };
         }
         return null;
@@ -1620,15 +1565,7 @@ const App = {
      *  before opening it. */
     _findNoteWithSection(nb, { title, path } = {}) {
         const low = title ? title.toLowerCase() : null;
-        return this._findPage(nb, p => p.type === 'page' && (low ? p.title.toLowerCase() === low : p.path === path));
-    },
-
-    _walkPages(pages, pred) {
-        for (const p of pages) {
-            if (pred(p)) return p;
-            if (p.children?.length) { const f = this._walkPages(p.children, pred); if (f) return f; }
-        }
-        return null;
+        return this._findPage(nb, p => (low ? p.title.toLowerCase() === low : p.path === path));
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1641,12 +1578,13 @@ const App = {
         menu.querySelectorAll('.ctx-editor-item, .ctx-sep').forEach(el => el.remove());
 
         const showMove = on => { const m = $('ctx-move'); if (m) m.style.display = on ? '' : 'none'; };
+        $('ctx-add-subsection').style.display = ctx.kind === 'tab' && ctx.tab.level === 'section' ? '' : 'none';
         if (ctx.kind === 'node') {
             this._ctxNode = ctx.node;
             this._ctxTab  = null;
             $('ctx-rename').style.display = '';
             $('ctx-delete').style.display = '';
-            showMove(ctx.node.type === 'page' && !!ctx.node.handle);
+            showMove(!!ctx.node.handle);
         } else if (ctx.kind === 'tab') {
             this._ctxNode = null;
             this._ctxTab  = ctx.tab;
@@ -1720,6 +1658,7 @@ const App = {
         $('ctx-rename').style.display = '';
         $('ctx-delete').style.display = '';
         const mv = $('ctx-move'); if (mv) mv.style.display = 'none';
+        $('ctx-add-subsection').style.display = 'none';
     },
 
     _handleEditorCtxAction(action) {
@@ -2236,7 +2175,7 @@ const App = {
         }
 
         // Fall back to the first available page in the current view
-        const first = this._walkPages(pages, p => p.type === 'page' && !!p.handle);
+        const first = pages.find(p => !!p.handle);
         if (first) await this.openPage(first.path, first.handle);
     },
 
@@ -2335,13 +2274,12 @@ const App = {
     },
 
     /** Rewrite every saved reference to paths under oldPrefix so they point under newPrefix:
-     *  the open page, per-page editor state, expanded pages, last-page-per-tab, and history. */
+     *  the open page, per-page editor state, last-page-per-tab, and history. */
     _remapNotebookPaths(nb, oldPrefix, newPrefix, { sameTab = false } = {}) {
         const map = p => (typeof p === 'string' && (p === oldPrefix || p.startsWith(oldPrefix + '/')))
             ? newPrefix + p.slice(oldPrefix.length) : p;
         const s = this._session(nb);
         if (s.pageStates)    s.pageStates    = Object.fromEntries(Object.entries(s.pageStates).map(([k, v]) => [map(k), v]));
-        if (s.expandedPages) s.expandedPages = s.expandedPages.map(map);
         if (s.sectionLastPage) {
             // Keys are tab paths ("Section" / "Section/Sub"), values are page paths. When a folder is
             // renamed both change together; when a page moves out of a tab only the value changes,
@@ -2363,7 +2301,6 @@ const App = {
         const s     = this._session(nb);
         const under = p => typeof p === 'string' && (p === prefix || p.startsWith(prefix + '/'));
         if (s.pageStates)      for (const k of Object.keys(s.pageStates)) if (under(k)) delete s.pageStates[k];
-        if (s.expandedPages)   s.expandedPages = s.expandedPages.filter(p => !under(p));
         if (s.sectionLastPage) for (const [k, v] of Object.entries(s.sectionLastPage)) if (under(k) || under(v)) delete s.sectionLastPage[k];
     },
 
@@ -2414,10 +2351,6 @@ const App = {
         this.renderPageList(this.activeSection, this.activeSubsection);
         this._renderNavButtons();
         this.scheduleNotebookSessionSave(nb.id);
-    },
-
-    _countPages(nodes) {
-        return (nodes || []).reduce((n, p) => n + (p.type === 'page' ? 1 : 0) + this._countPages(p.children), 0);
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -2504,8 +2437,8 @@ const App = {
         if (!entry) return;
 
         const pages = level === 'section'
-            ? this._countPages([...entry.pages, ...(entry.subsections || []).flatMap(s => s.pages)])
-            : this._countPages(entry.pages);
+            ? [...entry.pages, ...(entry.subsections || []).flatMap(s => s.pages)].length
+            : entry.pages.length;
         const kind = level === 'section' ? 'section' : 'sub-section';
         if (!await this._confirm(`Permanently delete ${kind} "${name}" and everything in it (${pages} page${pages === 1 ? '' : 's'})? This cannot be undone.`)) return;
 
@@ -2544,15 +2477,6 @@ const App = {
     // Move a page to another section / sub-section
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** The folder paired with this page (Foo.md + Foo/), or null. Pairing only exists inside
-     *  sub-sections: at the notebook root and section top level a folder is a section / sub-section. */
-    async _pairedDir(nb, node) {
-        const parent = parentPath(node.path);
-        if (!parent.includes('/')) return null;
-        try { return await (await resolveDir(nb.handle, parent)).getDirectoryHandle(node.title); }
-        catch { return null; }
-    },
-
     _initMoveDialog() {
         const dialog = $('move-dialog');
         if (!dialog) return;
@@ -2575,7 +2499,6 @@ const App = {
         const tree    = $('move-tree');
         const confirm = $('btn-move-confirm');
 
-        const hasChildren = !!(await this._pairedDir(nb, node));
         const here = parentPath(node.path);
 
         this._moveNode = node; this._moveDest = null; confirm.disabled = true;
@@ -2595,7 +2518,6 @@ const App = {
 
             let why = '';
             if (dest.path === here) why = 'The page is already here';
-            else if (hasChildren && !dest.path.includes('/')) why = 'A page with sub-pages can only move into a sub-section';
             if (why) {
                 row.classList.add('move-disabled');
                 row.title = why;
@@ -2637,23 +2559,14 @@ const App = {
         const srcParent = parentPath(srcPath);
         if (srcParent === dest.path) { this.toast('That page is already there.'); return; }
 
-        const pairedDir = await this._pairedDir(nb, node);
-        if (pairedDir && !dest.path.includes('/')) {
-            this.toast('A page with sub-pages can only move into a sub-section.', 5000);
-            return;
-        }
-
         const wasOpen = !!this.activePage && !this.activeIsDrawer && this.activePage === srcPath;
         await this._flushActivePage();
 
-        // Pick a name that clashes with nothing at the destination. Inside a sub-section a same-named
-        // FOLDER also counts: it would silently become this page's children (Foo.md + Foo/ pair up).
+        // Pick a name that clashes with nothing at the destination
         const taken = new Set();
         for await (const [n] of dest.handle.entries()) taken.add(n.toLowerCase());
-        const folderClash = dest.path.includes('/');
         let newTitle = node.title, i = 1;
-        while (taken.has(`${newTitle}.md`.toLowerCase()) || (folderClash && taken.has(newTitle.toLowerCase())))
-            newTitle = `${node.title} ${i++}`;
+        while (taken.has(`${newTitle}.md`.toLowerCase())) newTitle = `${node.title} ${i++}`;
         const newName = `${newTitle}.md`;
 
         // 1. Copy (and verify). Nothing has been deleted yet, so a failure here loses nothing.
@@ -2665,7 +2578,6 @@ const App = {
             createdFile = true;
             if ((await newFh.getFile()).size !== (await srcFh.getFile()).size)
                 throw new Error('the copy did not match the original, so nothing was deleted');
-            if (pairedDir) await copyDirVerified(srcDir, node.title, dest.handle, newTitle);
         } catch (e) {
             if (createdFile) await dest.handle.removeEntry(newName).catch(() => {});
             this.toast('Move failed: ' + e.message, 5000);
@@ -2675,7 +2587,6 @@ const App = {
         // 2. Only now remove the originals.
         try {
             await srcDir.removeEntry(node.name);
-            if (pairedDir) await srcDir.removeEntry(node.title, { recursive: true });
         } catch (e) {
             this.toast('The page was copied, but the original could not be removed: ' + e.message, 6000);
             await this._refreshAfterFsChange(nb);
@@ -2686,9 +2597,7 @@ const App = {
         const destPrefix = dest.path ? dest.path + '/' : '';
         const newPath    = `${destPrefix}${newName}`;
         this._remapNotebookPaths(nb, srcPath, newPath);
-        if (pairedDir) this._remapNotebookPaths(nb, srcPath.replace(/\.md$/, ''), `${destPrefix}${newTitle}`);
-        const moved = p => p === newPath || (!!pairedDir && p.startsWith(`${destPrefix}${newTitle}/`));
-        this._navHistory.forEach(h => { if (h.notebookId === nb.id && moved(h.pagePath)) { h.section = dest.section; h.subsection = dest.sub; } });
+        this._navHistory.forEach(h => { if (h.notebookId === nb.id && h.pagePath === newPath) { h.section = dest.section; h.subsection = dest.sub; } });
 
         if (wasOpen) {   // follow the open page, so it stays visible in the page list
             this.activeSection = dest.section;

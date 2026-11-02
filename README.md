@@ -22,16 +22,17 @@ Cento is a minimal, offline-first markdown notes app that runs in the browser as
 
 ## Organisation
 
-Cento maps a standard folder structure onto the OneNote model:
+Cento maps a standard folder structure onto the OneNote model, in three levels:
 
 ```
 Notebook folder/         ← a folder you open as a notebook
   Research/              ← a section (top-level subfolder)
-    Overview.md          ← a page
-    Projects.md          ← a parent page
-    Projects/            ← sub-pages of Projects.md
-      Alpha.md
+    Overview.md          ← a page belonging to the section itself
+    Projects/            ← a sub-section (subfolder of a section)
+      Alpha.md           ← a page
       Beta.md
+      Archive/           ← deeper folders are not a further level…
+        Old.md           ← …but this page still appears in Projects
   Daily Notes/           ← another section
     2026-06-01.md
   Loose note.md          ← appears in a virtual "Unfiled" section
@@ -39,7 +40,8 @@ Notebook folder/         ← a folder you open as a notebook
 
 - **Notebooks** — any folder on your drive.  (As a browser-based app, it will ask for permission to access the folder). Multiple notebooks can be open simultaneously; they appear in the left sidebar and are seamlessly restored on next launch (no re-picking required).
 - **Sections** — top-level subfolders, shown as horizontal tabs across the top of the editor. Click the `+` button at the right edge of the tab strip to add a new section.
-- **Pages** — `.md` files inside sections, listed in the right-hand panel. Pages can have sub-pages: a file named `Topic.md` paired with a folder named `Topic/` creates a parent page with children inside.
+- **Sub-sections** — subfolders of a section, shown as a second row of tabs beneath the section tabs once a section has at least one. The section's own pages sit under a **Pages** tab at the start of that row. Click the `+` at the end of the row to add a sub-section, or right-click a section tab and choose **Add Sub-Section** (the way to create a section's first one).
+- **Pages** — `.md` files, listed in the right-hand panel. A section with no sub-sections lists its own pages directly. A sub-section lists every `.md` file anywhere inside its folder as one flat, alphabetical list. Hierarchy stops at sub-sections: folders nested deeper don't create further levels, but the notes inside them still appear, so a notebook organised elsewhere never loses a note.
 - **Unfiled** — a virtual section that collects any `.md` files sitting directly in the notebook's root folder.
 
 ---
@@ -61,9 +63,13 @@ Notebook folder/         ← a folder you open as a notebook
 
 ### Columns
 
-One other thing Obsidian does not offer natively: comparing or composing content side by side within a single document. Again, in service of spatial organization, Cento lets you split any note into up to four columns. The columns are recorded in the `.md` file itself using a simple HTML comment delimiter (`<!column>`) that other markdown renderers silently ignore — so the file degrades gracefully outside Cento.
+One other thing Obsidian does not offer natively: comparing or composing content side by side within a single document. Again, in service of spatial organization, Cento lets you split any note into up to four columns. The columns are recorded in the `.md` file itself using a simple HTML comment delimiter (`
+<!column>
+`) that other markdown renderers silently ignore — so the file degrades gracefully outside Cento.
 
-To add a column: click the `+` column button in the toolbar (splits at the cursor position), or type `<!column>` anywhere in the note and press Enter. To remove the last column: click the `−` column button (content is merged back into the previous column).
+To add a column: click the `+` column button in the toolbar (splits at the cursor position), or type `
+<!column>
+` anywhere in the note and press Enter. To remove the last column: click the `−` column button (content is merged back into the previous column).
 
 ### Navigation
 
@@ -94,6 +100,8 @@ Each notebook stores its own session file (`.cento-notebook.json`) in its root f
 |---|---|
 | `Ctrl + S` | Save |
 | `Ctrl + K` | Wrap selection as hyperlink `[text]()` |
+| `Ctrl + B` | Bold |
+| `Ctrl + I` | Italic |
 
 ---
 

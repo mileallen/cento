@@ -398,7 +398,7 @@ customElements.define('section-tabs', SectionTabs);
 // <page-list>
 //
 // Scrollable container for the page list panel. Acts as a styled host for
-// <page-list-item> children placed by the App in its light DOM slot.
+// <page-list-item> rows placed by the App in its light DOM slot.
 // ─────────────────────────────────────────────────────────────────────────────
 class PageList extends HTMLElement {
     constructor() {
@@ -419,29 +419,22 @@ customElements.define('page-list', PageList);
 // ─────────────────────────────────────────────────────────────────────────────
 // <page-list-item>
 //
-// A single page (or sub-page group) row in the page list panel.
-// Child <page-list-item> elements are placed as light DOM children by the App
-// and appear via the <slot> — so nesting happens naturally in the DOM tree.
+// A single page row in the page list panel.
 //
 // Attributes:
-//   title         — display name
-//   page-path     — relative path within notebook (absent for groups)
-//   depth         — 0, 1, 2 … controls left-padding
-//   has-children  — presence attr; shows the ▶ triangle
-//   expanded      — presence attr; rotates triangle, reveals <slot>
-//   active        — presence attr; highlights this row
-//   is-group      — presence attr; unclickable group header style
-//   renaming      — presence attr; switches label to inline input
+//   title       — display name
+//   page-path   — relative path within the notebook
+//   active      — presence attr; highlights this row
+//   renaming    — presence attr; switches label to inline input
 //
 // Fires (bubbles=true, composed=true so they cross shadow boundaries):
 //   page-select      { detail: { path } }
-//   item-toggle      { detail: { path, expanded } }
 //   page-contextmenu { detail: { path, title } }
 //   page-rename      { detail: { path, newTitle } }
 // ─────────────────────────────────────────────────────────────────────────────
 class PageListItem extends HTMLElement {
     static get observedAttributes() {
-        return ['title', 'depth', 'has-children', 'renaming'];   // expanded / active / is-group are CSS-only
+        return ['title', 'renaming'];   // active is CSS-only
     }
 
     constructor() {
@@ -468,31 +461,15 @@ class PageListItem extends HTMLElement {
                 -webkit-app-region: no-drag;
             }
             .item:hover { background: var(--bg-hover); }
-            :host([is-group]) .item { cursor: default; }
-            :host([is-group]) .item:hover { background: transparent; }
             :host([active]) .item { background: var(--accent-glow); color: var(--accent); }
-            .toggle {
-                width: 14px; height: 14px;
-                display: flex; align-items: center; justify-content: center;
-                flex-shrink: 0;
-                color: var(--text-dim);
-                font-size: 9px;
-                transition: transform var(--transition);
-            }
-            :host([expanded]) .toggle { transform: rotate(90deg); }
+            /* Left gutter: keeps labels (and the rename box) exactly where they have always sat */
+            .indent { width: 6px; flex-shrink: 0; }
             .label {
                 flex: 1;
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 line-height: 1;
-            }
-            :host([is-group]) .label {
-                font-size: 10.5px;
-                font-weight: 600;
-                text-transform: uppercase;
-                letter-spacing: 0.7px;
-                color: var(--text-dim);
             }
             .rename-input {
                 flex: 1;
@@ -506,31 +483,18 @@ class PageListItem extends HTMLElement {
                 outline: none;
                 min-width: 0;
             }
-            /* Children slot is hidden when not expanded */
-            .children { display: none; }
-            :host([expanded]) .children { display: block; }
         </style>
         <div class="item">
-            <span class="toggle"></span>
+            <span class="indent"></span>
             <span class="label"></span>
-        </div>
-        <div class="children"><slot></slot></div>`;
+        </div>`;
 
         const item = this.shadowRoot.querySelector('.item');
 
         item.addEventListener('click', () => {
-            // Toggle expansion on items that have children
-            if (this.hasAttribute('has-children') || this.hasAttribute('is-group')) {
-                const willExpand = !this.hasAttribute('expanded');
-                willExpand ? this.setAttribute('expanded', '') : this.removeAttribute('expanded');
-                emit(this, 'item-toggle', { path: this.getAttribute('page-path'), expanded: willExpand });
-            }
-            // Navigate only for real pages (not group headers)
-            if (!this.hasAttribute('is-group') && this.getAttribute('page-path')) {
-                emit(this, 'page-select', { path: this.getAttribute('page-path') });
-            }
-        }
-        );
+            const path = this.getAttribute('page-path');
+            if (path) emit(this, 'page-select', { path });
+        });
 
         item.addEventListener('contextmenu', e => {
             e.preventDefault();
@@ -550,21 +514,9 @@ class PageListItem extends HTMLElement {
     }
 
     _sync() {
-        const depth = parseInt(this.getAttribute('depth')) || 0;
-        this._updateDepth(depth);
-        const toggle = this.shadowRoot.querySelector('.toggle');
-        if (toggle)
-            toggle.textContent = this.hasAttribute('has-children') ? '▶' : '';
         const label = this.shadowRoot.querySelector('.label');
         if (label)
             label.textContent = this.getAttribute('title') || '';
-    }
-
-    _updateDepth(depth) {
-        const item = this.shadowRoot.querySelector('.item');
-        // Indent: base 8px + 16px per nesting level
-        if (item)
-            item.style.paddingLeft = (8 + depth * 16) + 'px';
     }
 
     _showRenameInput() {
@@ -748,7 +700,6 @@ class CentoEditor extends HTMLElement {
 
         // Push merged content into the now-last CM
         prevCm.setValue(merged);
-        prevCm.clearHistory();   // a column merge can't be undone with Ctrl+Z
 
         this._focusedColIdx = Math.min(this._focusedColIdx, this._cms.length - 1);
         requestAnimationFrame( () => {
@@ -848,18 +799,6 @@ class CentoEditor extends HTMLElement {
                     });
                 }
                 ,
-                // Ctrl+B — wrap selection as Bold
-                'Ctrl-B': () => {
-                    const sel = cm.getSelection();
-                    if (sel) cm.replaceSelection(`**${sel}**`);
-                }
-                ,
-                // Ctrl+I — wrap selection as Italic
-                'Ctrl-I': () => {
-                    const sel = cm.getSelection();
-                    if (sel) cm.replaceSelection(`*${sel}*`);
-                }
-                ,
                 // Enter — detect if the current line is the <!column> delimiter
                 'Enter': () => {
                     const lineText = cm.getLine(cm.getCursor().line) || '';
@@ -879,7 +818,6 @@ class CentoEditor extends HTMLElement {
             line: 0,
             ch: 0
         });
-        cm.clearHistory();   // loading the note isn't a user edit, so Ctrl+Z must not be able to undo it
         cm.setSize('100%', '100%');
 
         if (this._editorMode === 'live')
@@ -1044,7 +982,6 @@ class CentoEditor extends HTMLElement {
         }, (_, i) => cm.getLine(cursorLine + 1 + i)).join('\n');
 
         cm.setValue(above);
-        cm.clearHistory();       // a column split can't be undone with Ctrl+Z
         // update current CM in place
 
         // Insert divider + new col-pane immediately after the current col-pane
