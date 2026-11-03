@@ -47,7 +47,9 @@ const MD_MACROS = {
 const MD_MATH_CACHE = new Map();
 
 /** TeX -> HTML. Cached, because re-rendering the same formulas is common. */
+let MD_SKIP_MATH = false;   // true while scanning for links: we want the anchors, not rendered formulas
 function mdMath(tex, display) {
+    if (MD_SKIP_MATH) return '<code class="math-fallback">' + escapeHtml("$$" + tex + "$$") + "</code>";
     const key = (display ? "D" : "I") + tex;
     let html = MD_MATH_CACHE.get(key);
     if (html !== undefined) return html;
@@ -501,4 +503,69 @@ function renderMarkdown(src, options) {
     return out.join("\n") + (ownNotes ? mdFootnoteList(fn) : "");
 }
 
-if (typeof module !== "undefined") module.exports = { renderMarkdown, escapeHtml, mdNewFootnotes, mdFootnoteList };
+if (typeof module !== "undefined") module.exports = { renderMarkdown, escapeHtml, mdNewFootnotes, mdFootnoteList, extractWikilinks, rewriteWikilinks };
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// [[wikilink]] scanning, for the backlinks index.
+//
+// Built on the renderer on purpose: whatever the preview turns into a link IS a link, so code
+// spans, code blocks and maths are excluded by the exact same rules, and the two can never drift.
+// ─────────────────────────────────────────────────────────────────────────────
+const MD_WIKI_ANCHOR = /<a href="#" class="wikilink" data-target="([^"]*)">\1<\/a>/g;
+
+function mdUnescape(s) {
+    return s.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, "&");
+}
+
+function mdRenderNoMath(md) {
+    const prev = MD_SKIP_MATH;
+    MD_SKIP_MATH = true;
+    try { return renderMarkdown(md); } finally { MD_SKIP_MATH = prev; }
+}
+
+/** Lowercase titles of every wikilink the renderer would make a link, unique, in order of first use. */
+function extractWikilinks(md) {
+    const seen = new Set(), out = [];
+    for (const m of mdRenderNoMath(md).matchAll(MD_WIKI_ANCHOR)) {
+        const t = mdUnescape(m[1]).toLowerCase();
+        if (!seen.has(t)) { seen.add(t); out.push(t); }
+    }
+    return out;
+}
+
+/** Replace the text of `[[old]]` links (oldKey is the lowercase title). A candidate rewrite is only
+ *  accepted if re-rendering it gives EXACTLY the old HTML with those anchors swapped — so nothing
+ *  but links can have changed (a [[old]] inside a code block, say, is never touched).
+ *  Returns { text, count, ok }: count = links found; ok = false means "left untouched, unsafe". */
+function rewriteWikilinks(md, oldKey, newTitle) {
+    const html = mdRenderNoMath(md);
+    let count = 0;
+    html.replace(MD_WIKI_ANCHOR, (a, t) => { if (mdUnescape(t).toLowerCase() === oldKey) count++; return a; });
+    if (!count) return { text: md, count: 0, ok: true };
+    if (/[\]\r\n\u0000-\u0002]/.test(newTitle)) return { text: md, count, ok: false };   // can't be written inside [[ ]]
+
+    const anchor = t => { const e = escapeHtml(t); return '<a href="#" class="wikilink" data-target="' + e + '">' + e + "</a>"; };
+    const expected = html.replace(MD_WIKI_ANCHOR, (a, t) => (mdUnescape(t).toLowerCase() === oldKey ? anchor(newTitle) : a));
+    for (const masked of [false, true]) {
+        const text = mdReplaceWikilinks(md, oldKey, newTitle, masked);
+        if (text !== md && mdRenderNoMath(text) === expected) return { text, count, ok: true };
+    }
+    return { text: md, count, ok: false };
+}
+
+/** First attempt: every [[old]] in the text. Second (masked): skip fenced blocks, $$ blocks and inline code. */
+function mdReplaceWikilinks(md, oldKey, newTitle, masked) {
+    const re = /\[\[([^\]\n]+)\]\]/g;
+    const swap = s => s.replace(re, (all, t) => (t.toLowerCase() === oldKey ? "[[" + newTitle + "]]" : all));
+    if (!masked) return swap(md);
+    let fence = null, math = false;
+    return md.split("\n").map(line => {
+        if (fence)  { if (line.trim().startsWith(fence)) fence = null; return line; }
+        const f = line.match(MD_FENCE);
+        if (f)      { fence = f[2]; return line; }
+        if (math)   { if (line.includes("$$")) math = false; return line; }
+        if (((line.match(/\$\$/g) || []).length % 2) === 1) { math = true; return line; }
+        return line.split(/(`[^`\n]+`)/).map((seg, i) => (i % 2 ? seg : swap(seg))).join("");
+    }).join("\n");
+}

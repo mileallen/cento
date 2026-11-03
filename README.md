@@ -55,6 +55,7 @@ Notebook folder/         ← a folder you open as a notebook
 - **Autosave** — notes save automatically as you type
 - **Columns** — split a single note into up to four side-by-side columns (see below)
 - **Outline panel** — a toggleable right sidebar showing the heading structure of the current page, with click-to-jump navigation
+- **Backlinks panel** — Shows a list of notes that link to the current note. Shares the right sidebar space with Outline.
 - **Markdown Syntax**: The usual — bold, italic, bold+italic, inline code, code blocks, blockquotes, horizontal rules, headings H1–H6, unordered and ordered lists, tables, plus highlight (`==text==`), superscript (`^text^`), subscript (`~text~`)
 - **Footnotes** — Inline in Live Preview, bottom of the page in Preview mode
 - **Maths blocks** — Equations in LaTeX syntax inside $ delimiters (`$$ W_t + C_t $$`), fully rendered in Preview Mode

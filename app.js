@@ -9,6 +9,7 @@ const DB_VERSION          = 2;
 const NOTEBOOK_STORE      = 'notebooks';
 const STATE_STORE         = 'app-state';
 const NOTEBOOK_SESSION    = '.cento-notebook.json';
+const WIKILINKS_FILE = '.cento-wikilinks.json';   // which notes link to which (derived data: safe to delete)
 const AUTOSAVE_MS         = 1500;
 const SESSION_MS          = 1000;
 
@@ -408,7 +409,8 @@ const App = {
     drawerFiles:      [],
     sidebarView:      'notebooks',
     editorMode:       'live',
-    outlineVisible:   false,
+    rightVisible:     false,       // is the right sidebar shown?
+    rightView:        'outline',   // …and which view: 'outline' | 'backlinks'
     sidebarWidth:     260,
     pageListWidth:    180,
     rightSidebarWidth:220,
@@ -478,7 +480,8 @@ const App = {
             'btn-toggle-preview':        () => this.toggleEditorMode(),
             'btn-add-column':            () => ed()?.addColumn(),
             'btn-remove-column':         () => ed()?.removeColumn(),
-            'btn-toggle-outline':        () => this.toggleOutline(),
+            'btn-toggle-outline':        () => this.setRightView('outline'),
+            'btn-toggle-backlinks':      () => this.setRightView('backlinks'),
             'btn-save':                  () => this.saveActivePage(),
             'btn-nav-back':              () => this.navBack(),
             'btn-nav-forward':           () => this.navForward(),
@@ -567,7 +570,7 @@ const App = {
             this.scheduleAutoSave();
         });
         document.addEventListener('cursor-change', () => {
-            if (this.outlineVisible) {
+            if (this.rightVisible && this.rightView === 'outline') {
                 clearTimeout(this._outlineTimer);
                 this._outlineTimer = setTimeout(() => this._renderOutline(), 300);
             }
@@ -924,6 +927,7 @@ const App = {
         this.activePageHandle = handle;
         this.activePageDirty  = false;
         this.activeIsDrawer   = false;
+        this._indexPage(this.activeNotebook, pagePath, content);   // opening a note brings it into the link index
 
         // Remember which page was last open in this section+sub-section
         // (so section/sub-section tab switches can restore it). The key is
@@ -955,7 +959,7 @@ const App = {
 
         this._renderToolbar();
         this.renderPageList(this.activeSection, this.activeSubsection);
-        if (this.outlineVisible) this._renderOutline();
+        if (this.rightVisible) this._renderRightPanel();
         this.scheduleNotebookSessionSave(this.activeNotebookId);
     },
 
@@ -974,13 +978,16 @@ const App = {
         if (s.sidebarWidth)      this.sidebarWidth      = s.sidebarWidth;
         if (s.pageListWidth)     this.pageListWidth      = s.pageListWidth;
         if (s.rightSidebarWidth) this.rightSidebarWidth  = s.rightSidebarWidth;
-        if (s.outlineVisible !== undefined) this.outlineVisible = s.outlineVisible;
+        const vis = s.rightVisible ?? s.outlineVisible;   // older sessions called it outlineVisible
+        if (vis !== undefined) this.rightVisible = vis;
+        if (s.rightView === 'outline' || s.rightView === 'backlinks') this.rightView = s.rightView;
 
         // Typography is per-notebook; fall back to defaults for any role not stored.
         this.typography = Object.fromEntries(Object.entries(TYPOGRAPHY_DEFAULTS)
             .map(([role, defaults]) => [role, { ...defaults, ...(s.typography?.[role] || {}) }]));
         this._applyTypography();
         this._applyWidths();
+        await this._loadLinkIndex(nb);   // the wikilink index rides along with the session
     },
 
     async saveNotebookSession(notebookId) {
@@ -1000,7 +1007,8 @@ const App = {
             sidebarWidth:     this.sidebarWidth,
             pageListWidth:    this.pageListWidth,
             rightSidebarWidth:this.rightSidebarWidth,
-            outlineVisible:   this.outlineVisible,
+            rightVisible:     this.rightVisible,
+            rightView:        this.rightView,
             typography:       this.typography,
             sectionLastPage:  nb.session?.sectionLastPage  || {},
             sectionLastSubsection: nb.session?.sectionLastSubsection || {},
@@ -1034,10 +1042,13 @@ const App = {
         const editorEl = $('editor');
         if (!handle || !editorEl) return;
 
+        const pagePath = this.activePage, nb = this.activeNotebook, isDrawer = this.activeIsDrawer;
         this.saveStatus = 'saving';
         this._renderSaveStatus();
         try {
-            await writeFile(handle, editorEl.getContent());
+            const content = editorEl.getContent();
+            await writeFile(handle, content);
+            if (!isDrawer) this._indexPage(nb, pagePath, content);   // wikilinks added or removed since the last save
             this.activePageDirty = false;
             this.saveStatus = 'saved';
             this._renderSaveStatus();
@@ -1121,6 +1132,16 @@ const App = {
             const dirHandle = parent ? await resolveDir(nb.handle, parent) : nb.handle;
             try { await dirHandle.getFileHandle(newName); this.toast('A file with that name already exists.'); return; } catch {}
 
+            // Notes that link here by title (from the index). If another note keeps the old title,
+            // those links still resolve to it, so nothing needs rewriting.
+            const oldKey  = node.title.toLowerCase(), newBase = newName.replace(/\.md$/, '');
+            const keeps   = !!this._findPage(nb, p => p !== node && p.title.toLowerCase() === oldKey);
+            const linkers = keeps ? [] : [...(nb.links?.byTarget.get(oldKey) || [])].filter(p => this._findPageByPath(nb, p));
+            if (linkers.length) {
+                const n = linkers.length;
+                if (!await this._confirm(`Rename "${node.title}" to "${newBase}"? Links to it in ${n} note${n === 1 ? '' : 's'} will be updated.`)) return;
+            }
+
             await this._flushActivePage();   // unsaved edits reach the file before it is copied
             const content = await readFile(node.handle);
             const newFh   = await dirHandle.getFileHandle(newName, { create: true });
@@ -1128,8 +1149,11 @@ const App = {
             await dirHandle.removeEntry(node.name);
 
             // Point every saved reference (open page, history, session) at the new name
-            this._remapNotebookPaths(nb, pagePath, joinPath(parent, newName), { sameTab: true });
+            const newPath = joinPath(parent, newName);
+            this._remapNotebookPaths(nb, pagePath, newPath, { sameTab: true });
             await this._refreshAfterFsChange(nb);   // also re-resolves the open page's file handle
+            if (linkers.length) await this._rewriteLinks(nb, linkers.map(p => (p === pagePath ? newPath : p)), oldKey, newBase);
+            if (this.rightVisible && this.rightView === 'backlinks') this._renderBacklinks();
         } catch (e) { this.toast('Rename failed: ' + e.message); }
     },
 
@@ -1190,8 +1214,8 @@ const App = {
 
         // Toolbar-right buttons: only visible when a page is open
         const show = el => { if (el) el.style.display = hasPage ? '' : 'none'; };
-        ['btn-toggle-preview', 'btn-save', 'btn-toggle-outline',
-         'btn-add-column', 'btn-remove-column']
+        ['btn-toggle-preview', 'btn-save', 'btn-toggle-outline', 'btn-toggle-backlinks',
+         'sep-right-a', 'sep-right-b', 'btn-add-column', 'btn-remove-column']
             .forEach(id => show($(id)));
 
         if (hasPage) {
@@ -1202,7 +1226,8 @@ const App = {
             btnPrev.querySelector('.svg-eye').style.display  = isPreview ? 'none' : '';
             btnPrev.querySelector('.svg-edit').style.display = isPreview ? ''     : 'none';
 
-            $('btn-toggle-outline').classList.toggle('active', this.outlineVisible);
+            $('btn-toggle-outline').classList.toggle('active', this.rightVisible && this.rightView === 'outline');
+            $('btn-toggle-backlinks').classList.toggle('active', this.rightVisible && this.rightView === 'backlinks');
 
             const btnAdd = $('btn-add-column');
             const btnRem = $('btn-remove-column');
@@ -1867,12 +1892,198 @@ const App = {
         }
     },
 
-    toggleOutline() {
-        this.outlineVisible = !this.outlineVisible;
+    /** Right-sidebar toolbar buttons. Like the left sidebar, a button shows its view; here the
+     *  active view's own button also hides the sidebar again. */
+    setRightView(view) {
+        if (this.rightVisible && this.rightView === view) this.rightVisible = false;
+        else { this.rightView = view; this.rightVisible = true; }
         this._applyWidths();
-        if (this.outlineVisible) this._renderOutline();
+        this._renderRightPanel();
         this._renderToolbar();
         this.scheduleNotebookSessionSave(this.activeNotebookId);
+    },
+
+    /** Show the chosen view's panel and (if the sidebar is open) draw it. */
+    _renderRightPanel() {
+        const outline = this.rightView === 'outline';
+        $('panel-outline').style.display   = outline ? '' : 'none';
+        $('panel-backlinks').style.display = outline ? 'none' : '';
+        if (!this.rightVisible) return;
+        if (outline) this._renderOutline(); else this._renderBacklinks();
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Backlinks: which notes link to the open note by [[wikilink]]
+    //
+    // The index (nb.links) remembers, per note, the titles it links to. It is filled when a
+    // note is SAVED or OPENED (never by scanning the whole notebook), so notes written before
+    // this feature appear as you use them. Two maps: sources (note → titles it links to) is
+    // what is stored; byTarget (title → notes linking to it) is built from it in memory.
+    // ─────────────────────────────────────────────────────────────────────────
+    async _loadLinkIndex(nb) {
+        const sources = new Map();
+        try {
+            const fh   = await nb.handle.getFileHandle(WIKILINKS_FILE);
+            const data = JSON.parse(await readFile(fh));
+            for (const [path, titles] of Object.entries(data.links || {}))
+                if (Array.isArray(titles) && titles.length) sources.set(path, titles.filter(t => typeof t === 'string'));
+        } catch {}   // no file yet, or unreadable: start empty (it is derived data and refills itself)
+        nb.links = { sources, byTarget: new Map() };
+        for (const [path, titles] of sources) titles.forEach(t => this._linkAdd(nb, t, path));
+    },
+
+    _linkAdd(nb, title, path) {
+        let set = nb.links.byTarget.get(title);
+        if (!set) nb.links.byTarget.set(title, set = new Set());
+        set.add(path);
+    },
+
+    _linkDrop(nb, title, path) {
+        const set = nb.links.byTarget.get(title);
+        if (set) { set.delete(path); if (!set.size) nb.links.byTarget.delete(title); }
+    },
+
+    /** Record which wikilinks a note's text contains. Returns true if that changed anything. */
+    _indexPage(nb, path, text) {
+        if (!nb?.links || !path) return false;
+        const now = extractWikilinks(text).sort();
+        const was = nb.links.sources.get(path) || [];
+        if (now.length === was.length && now.every((t, i) => t === was[i])) return false;
+        was.forEach(t => this._linkDrop(nb, t, path));
+        now.forEach(t => this._linkAdd(nb, t, path));
+        if (now.length) nb.links.sources.set(path, now); else nb.links.sources.delete(path);
+        this._scheduleLinkSave(nb);
+        return true;
+    },
+
+    _scheduleLinkSave(nb) {
+        clearTimeout(nb._linkTimer);
+        nb._linkTimer = setTimeout(() => this._saveLinkIndex(nb), SESSION_MS);
+    },
+
+    async _saveLinkIndex(nb) {
+        if (!nb?.links || nb.needsPermission) return;
+        try {
+            if (!nb.links.sources.size) { await nb.handle.removeEntry(WIKILINKS_FILE).catch(() => {}); return; }   // nothing to remember: no file
+            const links = {};
+            for (const p of [...nb.links.sources.keys()].sort()) links[p] = nb.links.sources.get(p);
+            const fh = await nb.handle.getFileHandle(WIKILINKS_FILE, { create: true });
+            await writeFile(fh, JSON.stringify({ version: 1, links }, null, 1));
+        } catch {}
+    },
+
+    /** A note moved or a folder was renamed: its index entries follow (same map as the session's). */
+    _remapLinkPaths(nb, map) {
+        const links = nb.links;
+        if (!links) return;
+        let changed = false;
+        for (const [path, titles] of [...links.sources]) {
+            const np = map(path);
+            if (np === path) continue;
+            changed = true;
+            links.sources.delete(path); links.sources.set(np, titles);
+            titles.forEach(t => { this._linkDrop(nb, t, path); this._linkAdd(nb, t, np); });
+        }
+        if (changed) this._scheduleLinkSave(nb);
+    },
+
+    /** Notes were deleted: drop them as link sources. */
+    _dropLinkSources(nb, under) {
+        const links = nb.links;
+        if (!links) return;
+        let changed = false;
+        for (const [path, titles] of [...links.sources]) {
+            if (!under(path)) continue;
+            changed = true;
+            titles.forEach(t => this._linkDrop(nb, t, path));
+            links.sources.delete(path);
+        }
+        if (changed) this._scheduleLinkSave(nb);
+    },
+
+    /** Notes that link to `pagePath`: { items: [{ node, section, subsection }], shadowed }.
+     *  Links resolve to the FIRST note with a title, so if that isn't this note (a duplicate
+     *  title), these links go elsewhere and nothing is listed (shadowed). */
+    _backlinksFor(nb, pagePath) {
+        const me = this._findPageByPath(nb, pagePath);
+        if (!me || !nb.links) return { items: [], shadowed: false };
+        if (this._findNoteWithSection(nb, { title: me.title })?.node !== me) return { items: [], shadowed: true };
+        const items = [];
+        for (const src of nb.links.byTarget.get(me.title.toLowerCase()) || []) {
+            if (src === pagePath) continue;
+            const hit = this._findPage(nb, p => p.path === src);
+            if (hit) items.push(hit);   // (an entry for a note deleted outside Cento is simply skipped)
+        }
+        return { items: items.sort((a, b) => a.node.title.localeCompare(b.node.title)), shadowed: false };
+    },
+
+    _renderBacklinks() {
+        const list = $('backlinks-list');
+        if (!list) return;
+        list.innerHTML = '';
+        const empty = text => { list.innerHTML = `<div class="outline-empty">${text}</div>`; };
+        const nb = this.activeNotebook;
+        if (!nb || !this.activePage || this.activeIsDrawer) return empty('Open a note to see what links to it.');
+
+        const { items, shadowed } = this._backlinksFor(nb, this.activePage);
+        if (shadowed)       return empty('Another note has the same title, so links to this title open that one.');
+        if (!items.length)  return empty('No notes link here yet.');
+        for (const { node, section, subsection } of items) {
+            const row = document.createElement('div');
+            row.className = 'search-result-item';   // same look as a search result: title + where it lives
+            row.innerHTML = `<div class="search-result-title">${escapeHtml(node.title)}</div>` +
+                            `<div class="search-result-context">${escapeHtml(subsection ? `${section} › ${subsection}` : section)}</div>`;
+            row.addEventListener('click', () => this._gotoPage(nb, { path: node.path }, 'Note not found'));
+            list.appendChild(row);
+        }
+    },
+
+    /** A note was renamed: rewrite [[old]] → [[new]] in each note that links to it. Open notes are
+     *  changed through the editor (so autosave can't overwrite the change); the rest on disk.
+     *  rewriteWikilinks refuses any note it cannot change with certainty — those are reported. */
+    async _rewriteLinks(nb, paths, oldKey, newTitle) {
+        const updated = [], failed = [];
+        for (const path of paths) {
+            const node = this._findPageByPath(nb, path);
+            if (!node?.handle) continue;
+            try {
+                const open = this.activeNotebookId === nb.id && !this.activeIsDrawer && this.activePage === path;
+                const ok = open ? this._rewriteInEditor(oldKey, newTitle) : await this._rewriteOnDisk(node, oldKey, newTitle);
+                if (ok === null) { this._indexPage(nb, path, open ? $('editor').getContent() : await readFile(node.handle)); continue; }   // index was stale: no such link
+                if (!ok) { failed.push(node.title); continue; }
+                if (open) await this._flushActivePage();   // writes the file and refreshes the index entry
+                else this._indexPage(nb, path, await readFile(node.handle));
+                updated.push(node.title);
+            } catch { failed.push(node.title); }
+        }
+        if (updated.length) this.toast(`Updated links in ${updated.length} note${updated.length === 1 ? '' : 's'}.`);
+        if (failed.length)  this.toast(`Could not safely update links in: ${failed.join(', ')}`, 7000);
+    },
+
+    /** true = rewritten, false = unsafe (left alone), null = no such link in the text. */
+    async _rewriteOnDisk(node, oldKey, newTitle) {
+        const text = await readFile(node.handle);
+        const res  = rewriteWikilinks(text, oldKey, newTitle);
+        if (!res.count) return null;
+        if (!res.ok) return false;
+        await writeFile(node.handle, res.text);
+        return true;
+    },
+
+    _rewriteInEditor(oldKey, newTitle) {
+        const cms = $('editor').getColumnCms();
+        const plans = [];
+        for (const cm of cms) {
+            const before = cm.getValue(), res = rewriteWikilinks(before, oldKey, newTitle);
+            if (!res.ok) return false;
+            if (res.count) plans.push({ cm, from: before.split('\n'), to: res.text.split('\n') });
+        }
+        if (!plans.length) return null;
+        for (const { cm, from, to } of plans) {
+            if (from.length !== to.length) return false;
+            cm.operation(() => to.forEach((line, i) => { if (line !== from[i]) cm.replaceRange(line, { line: i, ch: 0 }, { line: i, ch: from[i].length }); }));
+        }
+        return true;
     },
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1904,8 +2115,8 @@ const App = {
         if (st)  st.classList.toggle('tabs-collapsed', !showNotebookChrome);
         if (sst) sst.classList.toggle('tabs-collapsed', !showNotebookChrome);
 
-        if (rs)  { rs.style.display  = this.outlineVisible ? '' : 'none'; if (this.outlineVisible) rs.style.width = this.rightSidebarWidth + 'px'; }
-        if (rhr) rhr.style.display   = this.outlineVisible ? '' : 'none';
+        if (rs)  { rs.style.display  = this.rightVisible ? '' : 'none'; if (this.rightVisible) rs.style.width = this.rightSidebarWidth + 'px'; }
+        if (rhr) rhr.style.display   = this.rightVisible ? '' : 'none';
     },
 
     /** Push this.typography onto CSS custom properties. These vars are read
@@ -2292,6 +2503,7 @@ const App = {
             }
             s.sectionLastPage = out;
         }
+        this._remapLinkPaths(nb, map);
         if (this.activeNotebookId === nb.id && this.activePage) this.activePage = map(this.activePage);
         this._navHistory.forEach(h => { if (h.notebookId === nb.id) h.pagePath = map(h.pagePath); });
     },
@@ -2302,6 +2514,7 @@ const App = {
         const under = p => typeof p === 'string' && (p === prefix || p.startsWith(prefix + '/'));
         if (s.pageStates)      for (const k of Object.keys(s.pageStates)) if (under(k)) delete s.pageStates[k];
         if (s.sectionLastPage) for (const [k, v] of Object.entries(s.sectionLastPage)) if (under(k) || under(v)) delete s.sectionLastPage[k];
+        this._dropLinkSources(nb, under);
     },
 
     /** After a rescan the old file handles are dead: re-resolve the open page's and history's. */

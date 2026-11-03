@@ -56,7 +56,8 @@
                 <polyline points="17 21 17 13 7 13 7 21"/>
                 <polyline points="7 3 7 8 15 8"/>
             </symbol>
-            <symbol id="icon-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <symbol id="icon-backlinks" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 0 1-4 4H4"/></symbol>
+        <symbol id="icon-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <line x1="8"  y1="6"  x2="21" y2="6"/>
                 <line x1="8"  y1="12" x2="21" y2="12"/>
                 <line x1="8"  y1="18" x2="21" y2="18"/>
@@ -183,9 +184,17 @@
                     <svg><use href="#icon-column-remove"/></svg>
                 </button>
 
+                <div class="toolbar-sep" id="sep-right-a" style="display:none"></div>
+
+                <!-- Right sidebar views (like the left pair): the active one's button hides the sidebar -->
                 <button class="icon-btn" id="btn-toggle-outline" data-tip="Outline" style="display:none">
                     <svg><use href="#icon-list"/></svg>
                 </button>
+                <button class="icon-btn" id="btn-toggle-backlinks" data-tip="Backlinks" style="display:none">
+                    <svg><use href="#icon-backlinks"/></svg>
+                </button>
+
+                <div class="toolbar-sep" id="sep-right-b" style="display:none"></div>
 
                 <button class="icon-btn" id="btn-toggle-preview" data-tip="Preview Mode" style="display:none">
                     <svg class="svg-eye"><use href="#icon-eye"/></svg>
@@ -313,7 +322,7 @@
                  Hidden when outline is not visible. -->
             <div id="resize-right" class="sidebar-resize-handle" style="display:none"></div>
 
-            <!-- Outline sidebar (right): toggle with the list icon in toolbar -->
+            <!-- Right sidebar: Outline and Backlinks views, chosen with the two toolbar buttons -->
             <div id="right-sidebar" style="display:none">
                 <div id="panel-outline" class="sidebar-panel">
                     <div class="sidebar-header">
@@ -321,6 +330,14 @@
                     </div>
                     <div id="outline-list" class="outline-list">
                         <div class="outline-empty">Open a note to see its outline.</div>
+                    </div>
+                </div>
+                <div id="panel-backlinks" class="sidebar-panel" style="display:none">
+                    <div class="sidebar-header">
+                        <span class="sidebar-header-title">Backlinks</span>
+                    </div>
+                    <div id="backlinks-list" class="outline-list">
+                        <div class="outline-empty">Open a note to see what links to it.</div>
                     </div>
                 </div>
             </div>
