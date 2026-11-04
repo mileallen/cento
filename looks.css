@@ -1986,7 +1986,7 @@ body.zen-mode #zen-hot {
     display: block;
     position: fixed;
     top: 0; left: 0; right: 0;
-    height: 10px;
+    height: var(--tab-h);
     z-index: 50;
 }
 
@@ -2012,3 +2012,36 @@ body.zen-mode #zen-bar:focus-within {
     transform: none;
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   [[wikilink]] suggestion menu — built by <cento-editor>, appended to <body>.
+   Flat: no border, slightly transparent, a soft shadow only to lift it off the text.
+   ───────────────────────────────────────────────────────────────────────── */
+#wiki-menu {
+    display: none;
+    position: fixed;
+    z-index: 200;
+    min-width: 200px;
+    max-width: 360px;
+    padding: 4px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    background: color-mix(in srgb, var(--surface) 90%, transparent);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+    font-family: var(--font-ui);
+    font-size: 13px;
+}
+#wiki-menu .wiki-item {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 5px 10px;
+    border-radius: 4px;
+    color: var(--text-bright);
+    cursor: pointer;
+}
+#wiki-menu .wiki-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#wiki-menu .wiki-item.sel  { background: var(--accent-glow); }
+#wiki-menu small           { flex-shrink: 0; color: var(--text-dim); font-size: 11px; }

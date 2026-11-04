@@ -47,6 +47,17 @@ const MD_MACROS = {
 const MD_MATH_CACHE = new Map();
 
 /** TeX -> HTML. Cached, because re-rendering the same formulas is common. */
+// ── CENTO: the shared wikilink pieces ─────────────────────────────────────────
+// The renderer, the link rewriter, live preview and click handling (app.js) all build on these,
+// so what counts as a [[wikilink]], and the HTML it becomes, is defined once.
+const WIKILINK_SRC = "\\[\\[([^\\]\\n]+)\\]\\]";                          // [[title]]: group 1 is the title
+const wikilinkRe   = (flags = "g") => new RegExp(WIKILINK_SRC, flags);   // fresh each time: "g" regexps carry state
+/** The HTML for one wikilink. MD_WIKI_ANCHOR (below) has to match this shape. */
+function mdWikiAnchor(title) {
+    const t = escapeHtml(title);
+    return '<a href="#" class="wikilink" data-target="' + t + '">' + t + "</a>";
+}
+
 let MD_SKIP_MATH = false;   // true while scanning for links: we want the anchors, not rendered formulas
 function mdMath(tex, display) {
     if (MD_SKIP_MATH) return '<code class="math-fallback">' + escapeHtml("$$" + tex + "$$") + "</code>";
@@ -150,9 +161,8 @@ function mdInline(s, fn) {
     // ── CENTO RULES (1/3): [[wikilinks]] ─────────────────────────────────────
     // Lifted out whole, so the title can't be altered by bold/italic rules.
     // Same markup the old renderer produced; the click handler reads data-target.
-    s = s.replace(/\[\[([^\]\n]+)\]\]/g, (_, title) => {
-        const t = escapeHtml(title);
-        maths.push('<a href="#" class="wikilink" data-target="' + t + '">' + t + "</a>");
+    s = s.replace(wikilinkRe(), (_, title) => {
+        maths.push(mdWikiAnchor(title));
         return "\u0001" + (maths.length - 1) + "\u0001";
     });
 
@@ -545,8 +555,7 @@ function rewriteWikilinks(md, oldKey, newTitle) {
     if (!count) return { text: md, count: 0, ok: true };
     if (/[\]\r\n\u0000-\u0002]/.test(newTitle)) return { text: md, count, ok: false };   // can't be written inside [[ ]]
 
-    const anchor = t => { const e = escapeHtml(t); return '<a href="#" class="wikilink" data-target="' + e + '">' + e + "</a>"; };
-    const expected = html.replace(MD_WIKI_ANCHOR, (a, t) => (mdUnescape(t).toLowerCase() === oldKey ? anchor(newTitle) : a));
+    const expected = html.replace(MD_WIKI_ANCHOR, (a, t) => (mdUnescape(t).toLowerCase() === oldKey ? mdWikiAnchor(newTitle) : a));
     for (const masked of [false, true]) {
         const text = mdReplaceWikilinks(md, oldKey, newTitle, masked);
         if (text !== md && mdRenderNoMath(text) === expected) return { text, count, ok: true };
@@ -556,8 +565,7 @@ function rewriteWikilinks(md, oldKey, newTitle) {
 
 /** First attempt: every [[old]] in the text. Second (masked): skip fenced blocks, $$ blocks and inline code. */
 function mdReplaceWikilinks(md, oldKey, newTitle, masked) {
-    const re = /\[\[([^\]\n]+)\]\]/g;
-    const swap = s => s.replace(re, (all, t) => (t.toLowerCase() === oldKey ? "[[" + newTitle + "]]" : all));
+    const swap = s => s.replace(wikilinkRe(), (all, t) => (t.toLowerCase() === oldKey ? "[[" + newTitle + "]]" : all));
     if (!masked) return swap(md);
     let fence = null, math = false;
     return md.split("\n").map(line => {

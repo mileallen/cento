@@ -349,7 +349,7 @@ function applyInline(cm, lineNo, rawText, cursorCh) {
     applyPattern(text, /(==)(.+?)(==)/g,                     cursorCh, mk, 'cm-md-syntax', 'cm-md-highlight',         'cm-md-syntax');
     applyPattern(text, /(\^)(.+?)(\^)/g,                     cursorCh, mk, 'cm-md-syntax', 'cm-md-superscript',       'cm-md-syntax');
     applyPattern(text, /(~)(.+?)(~)/g,                       cursorCh, mk, 'cm-md-syntax', 'cm-md-subscript',         'cm-md-syntax');
-    applyBracketed(text, /\[\[([^\]]+)\]\]/g,                           2, 'cm-md-wikilink',    cursorCh, mk);
+    applyBracketed(text, wikilinkRe(),                                  2, 'cm-md-wikilink',    cursorCh, mk);
     applyBracketed(text, /\[([^\]]+)\]\((zotero:\/\/[^)]+)\)/g,           1, 'cm-md-zotero-link', cursorCh, mk);
     applyBracketed(text, /\[([^\]]+)\]\(((?!zotero:\/\/)[^)]+)\)/g,       1, 'cm-md-link',        cursorCh, mk);
 }
@@ -530,6 +530,7 @@ const App = {
                 this.toggleZen();
         });
         $('zen-tabs-el').addEventListener('zen-change', e => this._zenGoto(e.detail.section));
+        $('editor').wikiSuggest = query => this._wikiSuggestions(query);
 
         // ── Section tabs (custom element events) ─────────────────────────────
         const sectionTabsEl = $('section-tabs-el');
@@ -623,11 +624,16 @@ const App = {
                 if (!cm) return;
                 const pos  = cm.coordsChar({ left: e.clientX, top: e.clientY });
                 const line = cm.getLine(pos.line) || '';
+                // The link under the click: a line can hold several (the first is only a fallback).
+                const under = re => {
+                    const all = [...line.matchAll(re)];
+                    return all.find(m => pos.ch >= m.index && pos.ch <= m.index + m[0].length) || all[0];
+                };
                 if (el.classList.contains('cm-md-wikilink')) {
-                    const m = line.match(/\[\[([^\]]+)\]\]/);
+                    const m = under(wikilinkRe());
                     if (m) this.handleLinkClick({ href: m[1], isWiki: true });
                 } else {
-                    const m = line.match(/\[([^\]]+)\]\(([^)]+)\)/);
+                    const m = under(/\[([^\]]+)\]\(([^)]+)\)/g);
                     if (m) this.handleLinkClick({ href: m[2], isWiki: false });
                 }
             });
@@ -1326,6 +1332,29 @@ const App = {
         if (tabs.length < 2) return;
         const i = tabs.findIndex(t => t.key === this._zenKey());
         this._zenGoto(tabs[(i + dir + tabs.length) % tabs.length].key);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // [[wikilink]] suggestions  (the menu itself lives in <cento-editor>)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Up to 5 pages of the active notebook whose title contains what was typed after "[[": titles
+     *  that start with it first, then alphabetical. Where several pages share a title the section is
+     *  returned as a hint, because a [[link]] opens the first of them. */
+    _wikiSuggestions(query) {
+        const nb = this.activeNotebook, q = query.trim().toLowerCase();
+        if (!nb || !q) return [];
+        const count = new Map(), hits = [];
+        for (const root of this._pageRoots(nb)) {
+            for (const p of root.pages) {
+                const t = p.title.toLowerCase(), at = t.indexOf(q);
+                count.set(t, (count.get(t) || 0) + 1);
+                if (at >= 0) hits.push({ t, title: p.title, rank: at ? 1 : 0,
+                                         where: root.subsection ? `${root.section} / ${root.subsection}` : root.section });
+            }
+        }
+        return hits.sort((x, y) => x.rank - y.rank || x.t.localeCompare(y.t)).slice(0, 5)
+                   .map(h => ({ title: h.title, hint: count.get(h.t) > 1 ? h.where : '' }));
     },
 
     // ─────────────────────────────────────────────────────────────────────────

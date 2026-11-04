@@ -594,12 +594,19 @@ class CentoEditor extends HTMLElement {
         // the .editor-pane div that hosts col-panes
         this._previewPane = null;
         // the .preview-only-pane div (exists in preview mode)
+        this.wikiSuggest = null;
+        // set by the app: query => [{ title, hint }] (page titles for the [[ menu)
+        this._wiki = null;
+        // the open [[ menu: { cm, from, items, sel }
+        this._typed = false;
+        // set by a typing change; consumed by the next cursorActivity
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
     /** Load new content. Destroys existing CMs and rebuilds. */
     load(rawContent, columnsData=[]) {
+        this._wikiClose();
         this._clearEditor();
         this._buildEditorPane(rawContent || '', columnsData);
         // If we were in preview mode, rebuild the preview with new content
@@ -853,17 +860,42 @@ class CentoEditor extends HTMLElement {
 
         cm.on('cursorActivity', () => {
             onCursorOrChange();
+            this._wikiUpdate(cm, this._typed);
+            this._typed = false;
             this._dispatch('cursor-change');
         }
         );
 
         cm.on('change', (_, change) => {
             onCursorOrChange();
+            if (['+input', '+delete', '*compose'].includes(change.origin))
+                this._typed = true;
             if (change.origin !== 'setValue') {
                 this._dispatch('content-change');
             }
         }
         );
+
+        // [[ menu keys. Registered as a CodeMirror event so that, while the menu is open, they run
+        // before CodeMirror's own bindings (Enter, Tab) and can stop Esc reaching the app (Zen mode).
+        cm.on('keydown', (_, e) => {
+            const w = this._wiki;
+            if (!w || w.cm !== cm || e.ctrlKey || e.metaKey || e.altKey || e.isComposing)
+                return;
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                w.sel = (w.sel + (e.key === 'ArrowDown' ? 1 : w.items.length - 1)) % w.items.length;
+                this._wikiRender();
+            } else if (e.key === 'Enter' || e.key === 'Tab')
+                this._wikiPick(w.sel);
+            else if (e.key === 'Escape')
+                this._wikiClose();
+            else
+                return;
+            e.preventDefault();
+            e.stopPropagation();
+        });
+        cm.on('blur', () => this._wikiClose());
+        cm.on('scroll', () => this._wikiClose());
 
         this._cms.push(cm);
 
@@ -872,6 +904,76 @@ class CentoEditor extends HTMLElement {
             cm.refresh();
         }
         );
+    }
+
+    // ── [[wikilink]] suggestions ───────────────────────────────────────────────
+    // Typing after "[[" opens a small menu of matching page titles, supplied by the app through
+    // .wikiSuggest. Up/Down move, Enter/Tab insert, Esc, a click elsewhere or moving away closes it.
+    // The menu only opens from typing, never merely because the cursor lands after a "[[".
+
+    _wikiUpdate(cm, typed) {
+        const cur = cm.getCursor();
+        const m = this.wikiSuggest && !cm.somethingSelected()
+            && cm.getLine(cur.line).slice(0, cur.ch).match(/\[\[([^\[\]]+)$/);
+        if (!m || !(typed || this._wiki))
+            return this._wikiClose();
+        const items = this.wikiSuggest(m[1]);
+        if (!items.length)
+            return this._wikiClose();
+        this._wiki = { cm, from: { line: cur.line, ch: cur.ch - m[1].length }, items, sel: 0 };
+        this._wikiRender();
+    }
+
+    _wikiRender() {
+        const { cm, from, items, sel } = this._wiki;
+        let el = this._wikiEl;
+        if (!el) {
+            el = this._wikiEl = document.createElement('div');
+            el.id = 'wiki-menu';
+            // mousedown, not click: the editor must keep focus
+            el.addEventListener('mousedown', e => {
+                e.preventDefault();
+                const row = e.target.closest('[data-i]');
+                if (row)
+                    this._wikiPick(+row.dataset.i);
+            });
+            document.body.appendChild(el);
+        }
+        el.replaceChildren(...items.map( (it, i) => {
+            const row = document.createElement('div');
+            row.className = 'wiki-item' + (i === sel ? ' sel' : '');
+            row.dataset.i = i;
+            const name = document.createElement('span');
+            name.textContent = it.title;
+            row.append(name);
+            if (it.hint) {
+                const hint = document.createElement('small');
+                hint.textContent = it.hint;
+                row.append(hint);
+            }
+            return row;
+        }));
+        el.style.display = 'block';
+        const at = cm.cursorCoords(from, 'window');
+        el.style.left = Math.max(8, Math.min(at.left, innerWidth - el.offsetWidth - 8)) + 'px';
+        el.style.top = (at.bottom + el.offsetHeight + 8 > innerHeight ? at.top - el.offsetHeight - 4 : at.bottom + 4) + 'px';
+    }
+
+    _wikiPick(i) {
+        const { cm, from, items } = this._wiki;
+        const at = cm.getCursor();
+        // An existing "]]" ends this link: replace what is left of the old target too, and keep it.
+        const close = cm.getLine(from.line).slice(at.ch).match(/^[^\[\]]*\]\]/);
+        this._wikiClose();
+        cm.replaceRange(items[i].title + (close ? '' : ']]'), from, { line: from.line, ch: at.ch + (close ? close[0].length - 2 : 0) });
+        cm.setCursor({ line: from.line, ch: from.ch + items[i].title.length + 2 });
+        cm.focus();
+    }
+
+    _wikiClose() {
+        this._wiki = null;
+        if (this._wikiEl)
+            this._wikiEl.style.display = 'none';
     }
 
     /** Switch between live-edit and rendered-preview modes */
