@@ -111,7 +111,7 @@ Each notebook stores its own session file (`.cento-notebook.json`) in its root f
 | `Ctrl + K` | Wrap selection as hyperlink `[text]()` |
 | `Ctrl + B` | Bold |
 | `Ctrl + I` | Italic |
-| `Ctrl + Tab` |  In Zen mode, rotate thorugh tabs |
+| `Ctrl + Tab` |  In Zen mode (as PWA), rotate thorugh tabs |
 
 ---
 
