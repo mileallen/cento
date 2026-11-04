@@ -73,7 +73,7 @@ const FONT_CATALOG = [
 const WEIGHT_NAMES = { 100: 'Thin', 200: 'Extralight', 300: 'Light', 400: 'Regular', 500: 'Medium', 600: 'Semibold', 700: 'Bold', 800: 'Extrabold', 900: 'Heavy' };
 
 const TYPOGRAPHY_DEFAULTS = {
-    body: { font: 'dm-sans', size: 14, weight: 400 },
+    body: { font: 'inter', size: 13, weight: 300 },
     h1:   { font: 'dm-sans', size: 27, weight: 600 },
     h2:   { font: 'dm-sans', size: 21, weight: 600 },
     h3:   { font: 'dm-sans', size: 17, weight: 600 },
@@ -427,6 +427,9 @@ const App = {
     _outlineTimer:    null,
     _navHistory:      [],   // [{notebookId, section, subsection, pagePath, handle}] — in-memory only
     _navIndex:        -1,   // current position in _navHistory
+    _zenBusy:         false, // a Zen tab switch is in flight
+    _zenEntry:        null, // key (see _zenKey) of the note Zen mode was started on (always gets a tab)
+    _pageNotebookId:  null, // id of the notebook that owns the open page (activeNotebookId changes first on a switch)
     _navigating:      false,// true while executing a back/forward jump (suppress push)
     _ctxNode:         null,
     _ctxTab:          null,   // { level: 'section' | 'subsection', name } while the menu is open on a tab
@@ -450,6 +453,8 @@ const App = {
     },
 
     get activeNotebook() { return this.notebooks.find(n => n.id === this.activeNotebookId); },
+    /** Zen mode lives only in the body class (CSS does the hiding); it is never persisted. */
+    get zenMode() { return document.body.classList.contains('zen-mode'); },
 
     /** The notebook's saved-session object (created on first use). */
     _session(nb) { return nb.session ??= {}; },
@@ -478,6 +483,8 @@ const App = {
             'btn-sidebar-notebooks':     () => this.setSidebarView('notebooks'),
             'btn-sidebar-search':        () => { this.setSidebarView('search'); $('search-input').focus(); },
             'btn-toggle-preview':        () => this.toggleEditorMode(),
+            'btn-zen':                   () => this.toggleZen(),
+            'btn-zen-exit':              () => this.toggleZen(),
             'btn-add-column':            () => ed()?.addColumn(),
             'btn-remove-column':         () => ed()?.removeColumn(),
             'btn-toggle-outline':        () => this.setRightView('outline'),
@@ -500,6 +507,29 @@ const App = {
             // toLowerCase: with Caps Lock on, e.key is 'S'
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); this.saveActivePage(); }
         });
+
+        // ── Zen mode and preview shortcuts ───────────────────────────────────
+        // e.code (physical key), not e.key: on a Mac, Option+P types "π".
+        window.addEventListener('keydown', e => {
+            if (e.ctrlKey && !e.altKey && !e.metaKey && e.key === 'Tab' && this.zenMode) {   // like browser tabs
+                e.preventDefault();
+                this._zenCycle(e.shiftKey ? -1 : 1);
+                return;
+            }
+            if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey) {
+                if (e.code === 'KeyZ') { e.preventDefault(); this.toggleZen(); }
+                if (e.code === 'KeyP') { e.preventDefault(); if (this.activePageHandle) this.toggleEditorMode(); }
+                return;
+            }
+            // Esc exits Zen unless it is closing something else. Not e.defaultPrevented: CodeMirror
+            // handles Esc itself (collapses multi-selections) and marks it prevented.
+            const t = e.target;
+            const typing = t.matches?.('input, textarea') && !t.closest('.CodeMirror');
+            if (e.key === 'Escape' && this.zenMode && !typing
+                && !$('context-menu').classList.contains('show') && !document.querySelector('dialog[open]'))
+                this.toggleZen();
+        });
+        $('zen-tabs-el').addEventListener('zen-change', e => this._zenGoto(e.detail.section));
 
         // ── Section tabs (custom element events) ─────────────────────────────
         const sectionTabsEl = $('section-tabs-el');
@@ -630,6 +660,10 @@ const App = {
         $('ctx-move')?.addEventListener('click', () => {
             const node = this._ctxNode; this._hideContextMenu();
             if (node) this.openMoveDialog(node);
+        });
+        $('ctx-pin').addEventListener('click', () => {
+            const node = this._ctxNode; this._hideContextMenu();
+            if (node) this.togglePin(node);
         });
         $('context-menu').addEventListener('click', e => {
             const item = e.target.closest('.ctx-editor-item');
@@ -793,9 +827,14 @@ const App = {
     },
 
     /** Switch the editor to a notebook that's already mounted */
-    async switchToNotebook(id) {
+    /** restorePage: false skips reopening the notebook's last page, for callers about to open a specific one. */
+    async switchToNotebook(id, { restorePage = true } = {}) {
         const nb = this.notebooks.find(n => n.id === id);
         if (!nb) return;
+
+        // Save the page being left while its notebook is still the active one
+        await this._flushActivePage();
+        this._snapshotPage();
 
         // Re-request permission if needed (user must interact)
         if (nb.needsPermission) {
@@ -834,7 +873,7 @@ const App = {
             this.activeSubsection = null;
         }
 
-        if (s.activePage) {
+        if (restorePage && s.activePage) {
             const node = this._findPageByPath(nb, s.activePage);
             if (node?.handle) {
                 const colData = s.pageStates?.[s.activePage]?.columns || [];
@@ -914,6 +953,8 @@ const App = {
 
     async openPage(pagePath, handle, columnsData = []) {
         if (!handle) return;
+        await this._flushActivePage();   // unsaved edits to the page being left must not be lost
+        this._snapshotPage();            // …nor its scroll / cursor position
         const content = await readFile(handle);
 
         // If no columnsData was supplied, try the notebook session
@@ -925,6 +966,7 @@ const App = {
 
         this.activePage       = pagePath;
         this.activePageHandle = handle;
+        this._pageNotebookId  = this.activeNotebookId;
         this.activePageDirty  = false;
         this.activeIsDrawer   = false;
         this._indexPage(this.activeNotebook, pagePath, content);   // opening a note brings it into the link index
@@ -960,6 +1002,7 @@ const App = {
         this._renderToolbar();
         this.renderPageList(this.activeSection, this.activeSubsection);
         if (this.rightVisible) this._renderRightPanel();
+        if (this.zenMode) this._renderZenTabs();
         this.scheduleNotebookSessionSave(this.activeNotebookId);
     },
 
@@ -994,11 +1037,7 @@ const App = {
         const nb = this.notebooks.find(n => n.id === notebookId);
         if (!nb || nb.needsPermission) return;
 
-        // Snapshot current page's editor state into pageStates
-        const editorEl = $('editor');
-        if (this.activePage && editorEl && !this.activeIsDrawer) {
-            (this._session(nb).pageStates ??= {})[this.activePage] = { columns: editorEl.getColumnsState() };
-        }
+        this._snapshotPage();   // current page's editor state into pageStates
 
         const session = {
             activeSection:    this.activeSection,
@@ -1200,6 +1239,96 @@ const App = {
     },
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Zen mode  (body.zen-mode hides the chrome; tabs = pinned notes + the current one)
+    // A pin is just `pinned: true` on the note's pageStates entry, so the session save and
+    // the rename / move / delete bookkeeping that already handle pageStates cover it.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /** Save the open page's scroll / cursor state, keeping anything else stored for it (e.g. its pin). */
+    _snapshotPage() {
+        const nb = this.notebooks.find(n => n.id === this._pageNotebookId), ed = $('editor');   // the page's owner, not necessarily the active notebook
+        if (!nb || !this.activePage || this.activeIsDrawer || !ed) return;
+        const states = (this._session(nb).pageStates ??= {});
+        states[this.activePage] = { ...states[this.activePage], columns: ed.getColumnsState() };
+    },
+
+    _isPinned(path) { return !!this._session(this.activeNotebook).pageStates?.[path]?.pinned; },
+
+    togglePin(node) {
+        const nb = this.activeNotebook;
+        if (!nb) return;
+        const state = ((this._session(nb).pageStates ??= {})[node.path] ??= {});
+        if (state.pinned) delete state.pinned; else state.pinned = true;
+        this.toast(state.pinned ? 'Pinned to Zen Mode' : 'Unpinned from Zen Mode');
+        if (this.zenMode) this._renderZenTabs();
+        this.scheduleNotebookSessionSave(nb.id);
+    },
+
+    toggleZen() {
+        const on = !this.zenMode;
+        if (on && (!this.activePage || this.activeIsDrawer)) { this.toast('Open a note to enter Zen mode.'); return; }
+        this._hideContextMenu();
+        this._zenEntry = on ? this._zenKey() : null;
+        document.body.classList.toggle('zen-mode', on);
+        if (on) {
+            this._renderZenTabs();
+            const away = this.notebooks.filter(n => n.needsPermission).length;
+            if (away) this.toast(`${away} notebook${away > 1 ? 's need' : ' needs'} reconnecting; ${away > 1 ? 'their' : 'its'} pinned notes aren't shown.`);
+        }
+        // The editor's container just changed size; CodeMirror needs telling.
+        requestAnimationFrame(() => $('editor').getColumnCms().forEach(cm => cm.refresh()));
+    },
+
+    /** A Zen tab's identity: paths repeat across notebooks, so the notebook id comes first. */
+    _zenKey(nbId = this._pageNotebookId, path = this.activePage) { return `${nbId}:${path}`; },
+
+    _zenResolve(key) {
+        const k = key.indexOf(':');
+        const nb = this.notebooks.find(n => String(n.id) === key.slice(0, k));
+        const path = key.slice(k + 1);
+        return { nb, path, node: nb && !nb.needsPermission ? this._findPageByPath(nb, path) : null };
+    },
+
+    /** Tabs = every pinned note of every connected notebook, then the note Zen started on, then the
+     *  open one (deduped). Unpinned notes only stay while in use, so nothing accumulates. */
+    _zenTabs() {
+        const keys = [];
+        for (const nb of this.notebooks) {
+            if (nb.needsPermission) continue;
+            for (const [path, st] of Object.entries(this._session(nb).pageStates || {}))
+                if (st.pinned) keys.push(this._zenKey(nb.id, path));
+        }
+        keys.push(this._zenEntry, this.activePage && this._zenKey());
+        return [...new Set(keys.filter(Boolean))]
+            .map(key => ({ key, ...this._zenResolve(key) })).filter(t => t.node);
+    },
+
+    /** The notebook shows as a tooltip, keeping the labels clean. */
+    _renderZenTabs() {
+        const tabs = this._zenTabs().map(t => ({ name: t.key, label: t.node.title, tip: `${t.nb.name} — ${t.path}` }));
+        const el = $('zen-tabs-el');
+        el.setAttribute('sections', JSON.stringify(tabs));
+        el.setAttribute('active-section', this.activePage ? this._zenKey() : '');
+    },
+
+    /** Open a Zen tab's note (tab click and Ctrl+Tab). Ignored while a switch is still in flight. */
+    async _zenGoto(key) {
+        const { nb, path } = this._zenResolve(key);
+        if (!nb || this._zenBusy || key === this._zenKey()) return;
+        this._zenBusy = true;
+        try { await this._gotoPage(nb, { path }, 'Note not found'); }
+        finally { this._zenBusy = false; }
+    },
+
+    /** Next / previous tab in bar order, wrapping round. */
+    _zenCycle(dir) {
+        const tabs = this._zenTabs();
+        if (tabs.length < 2) return;
+        const i = tabs.findIndex(t => t.key === this._zenKey());
+        this._zenGoto(tabs[(i + dir + tabs.length) % tabs.length].key);
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Rendering helpers — each updates only its own DOM slice
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -1214,7 +1343,7 @@ const App = {
 
         // Toolbar-right buttons: only visible when a page is open
         const show = el => { if (el) el.style.display = hasPage ? '' : 'none'; };
-        ['btn-toggle-preview', 'btn-save', 'btn-toggle-outline', 'btn-toggle-backlinks',
+        ['btn-toggle-preview', 'btn-save', 'btn-zen', 'btn-toggle-outline', 'btn-toggle-backlinks',
          'sep-right-a', 'sep-right-b', 'btn-add-column', 'btn-remove-column']
             .forEach(id => show($(id)));
 
@@ -1239,10 +1368,12 @@ const App = {
     },
 
     _renderSaveStatus() {
-        const el = $('save-indicator');
-        el.className  = this.saveStatus;
-        el.textContent = this.saveStatus === 'saving' ? 'saving…'
-                       : this.saveStatus === 'saved'  ? 'saved' : '';
+        for (const id of ['save-indicator', 'zen-save-indicator']) {   // toolbar's and the Zen bar's
+            const el = $(id);
+            el.className  = this.saveStatus;
+            el.textContent = this.saveStatus === 'saving' ? 'saving…'
+                           : this.saveStatus === 'saved'  ? 'saved' : '';
+        }
     },
 
     _renderSidebar() {
@@ -1550,7 +1681,7 @@ const App = {
     async _gotoPage(nb, query, notFound) {
         const found = this._findNoteWithSection(nb, query);
         if (!found?.node?.handle) { this.toast(notFound); return; }
-        if (nb.id !== this.activeNotebookId) await this.switchToNotebook(nb.id);
+        if (nb.id !== this.activeNotebookId) await this.switchToNotebook(nb.id, { restorePage: false });   // the target page opens next
         this._setActiveSectionAndSubsection(found.section, found.subsection);
         await this.openPage(found.node.path, found.node.handle);
     },
@@ -1604,9 +1735,11 @@ const App = {
 
         const showMove = on => { const m = $('ctx-move'); if (m) m.style.display = on ? '' : 'none'; };
         $('ctx-add-subsection').style.display = ctx.kind === 'tab' && ctx.tab.level === 'section' ? '' : 'none';
+        $('ctx-pin').style.display = ctx.kind === 'node' ? '' : 'none';
         if (ctx.kind === 'node') {
             this._ctxNode = ctx.node;
             this._ctxTab  = null;
+            $('ctx-pin').textContent = this._isPinned(ctx.node.path) ? 'Unpin from Zen Mode' : 'Pin to Zen Mode';
             $('ctx-rename').style.display = '';
             $('ctx-delete').style.display = '';
             showMove(!!ctx.node.handle);
@@ -1684,6 +1817,7 @@ const App = {
         $('ctx-delete').style.display = '';
         const mv = $('ctx-move'); if (mv) mv.style.display = 'none';
         $('ctx-add-subsection').style.display = 'none';
+        $('ctx-pin').style.display = 'none';
     },
 
     _handleEditorCtxAction(action) {
@@ -2345,7 +2479,7 @@ const App = {
         try {
             // Switch notebook if needed
             if (entry.notebookId !== this.activeNotebookId)
-                await this.switchToNotebook(entry.notebookId);
+                await this.switchToNotebook(entry.notebookId, { restorePage: false });   // the entry's page opens below
             // Switch section + sub-section if needed (both are part of the
             // history entry so back/forward restores the exact view).
             const targetSub = entry.subsection || null;

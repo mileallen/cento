@@ -148,7 +148,9 @@ customElements.define('notebook-entry', NotebookEntry);
 //              active-section — currently selected section name
 //              variant        — optional; "subsection" renders a second-level
 //                               row with smaller height and subtly different
-//                               colors. Also changes the fired event names:
+//                               colors. variant="zen" is the flat, add-less note
+//                               tab row of Zen mode (fires zen-change { section }).
+//                               Also changes the fired event names:
 //                                 section-change  → subsection-change
 //                                 section-add     → subsection-add
 // Fires       : section-change     { detail: { section: name } }   (default)
@@ -290,15 +292,25 @@ class SectionTabs extends HTMLElement {
                 width: 80px;
                 padding: 1px 6px;
             }
+
+            /* ── Zen variant: the note tabs in the Zen bar. Flat, no + button; the
+               bar's own background and border come from #zen-bar in looks.css. */
+            :host([variant="zen"]) { flex: 1; min-width: 0; }
+            :host([variant="zen"]) .bar { background: transparent; border-bottom: none; align-items: center; padding: 0; }
+            :host([variant="zen"]) .tab { height: 28px; padding: 0 14px; font-size: 12.5px; border: none; border-radius: 6px; }
+            :host([variant="zen"]) .tab.active { background: var(--bg-tab-active); color: var(--text-bright); }
+            :host([variant="zen"]) .tab.active::after,
+            :host([variant="zen"]) .add-section-btn { display: none; }
         </style>
         <div class="bar" part="bar"></div>`;
     }
 
     /** Event names depend on variant — callers listen on the host element
      *  directly, so the names just need to differ between the two rows. */
-    get _changeEvent() { return this.hasAttribute('variant') ? 'subsection-change' : 'section-change'; }
-    get _addEvent()    { return this.hasAttribute('variant') ? 'subsection-add'    : 'section-add'; }
-    get _addLabel()    { return this.hasAttribute('variant') ? 'Add Sub-section'   : 'Add Section'; }
+    get _variant()     { return this.getAttribute('variant'); }
+    get _changeEvent() { return { subsection: 'subsection-change', zen: 'zen-change' }[this._variant] || 'section-change'; }
+    get _addEvent()    { return this._variant === 'subsection' ? 'subsection-add'  : 'section-add'; }
+    get _addLabel()    { return this._variant === 'subsection' ? 'Add Sub-section' : 'Add Section'; }
 
     connectedCallback() {
         this._render();
@@ -330,6 +342,7 @@ class SectionTabs extends HTMLElement {
             // whose real name is the PAGES_PSEUDO_TAB sentinel.
             tab.textContent = sec.label || sec.name;
             tab.dataset.name = sec.name;
+            if (sec.tip) tab.title = sec.tip;   // optional hover text (used by the Zen bar)
             // Right-click: the app shows its shared context menu (Rename / Delete) at the pointer
             tab.addEventListener('contextmenu', e => {
                 e.preventDefault();

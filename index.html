@@ -124,6 +124,13 @@
             <symbol id="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
             </symbol>
+            <!-- Zen: viewfinder corners -->
+            <symbol id="icon-zen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
+            </symbol>
+            <symbol id="icon-exit-zen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3"/>
+            </symbol>
         </svg>
     </head>
 
@@ -205,6 +212,9 @@
                     <svg><use href="#icon-save"/></svg>
                 </button>
 
+                <button class="icon-btn" id="btn-zen" data-tip="Zen Mode (Ctrl+Alt+Z)" style="display:none">
+                    <svg><use href="#icon-zen"/></svg>
+                </button>
                 <div class="toolbar-sep"></div>
 
                 <!-- Theme toggle: switches data-theme on <html> between
@@ -344,6 +354,17 @@
 
         </div><!-- /#layout -->
 
+        <!-- ─── Zen bar: shown only under body.zen-mode; slides in when the pointer
+             touches the top edge. Tabs are filled by App._renderZenTabs(). -->
+        <div id="zen-hot"></div>
+        <div id="zen-bar">
+            <section-tabs id="zen-tabs-el" variant="zen"></section-tabs>
+            <span id="zen-save-indicator"></span>
+            <button class="icon-btn" id="btn-zen-exit" data-tip="Exit Zen (Esc)">
+                <svg><use href="#icon-exit-zen"/></svg>
+            </button>
+        </div>
+
         <!-- ─── Overlays ─────────────────────────────────────────────────── -->
         <div id="toast"></div>
 
@@ -351,6 +372,7 @@
             <div class="ctx-item" id="ctx-rename">Rename</div>
             <div class="ctx-item" id="ctx-add-subsection" style="display:none">Add Sub-Section</div>
             <div class="ctx-item" id="ctx-move" style="display:none">Move to Section…</div>
+            <div class="ctx-item" id="ctx-pin" style="display:none">Pin to Zen Mode</div>
             <div class="ctx-item danger" id="ctx-delete">Delete</div>
         </div>
 

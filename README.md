@@ -62,6 +62,12 @@ Notebook folder/         ← a folder you open as a notebook
 - **Code syntax highlight** — For Python and JavaScript ( Preview Mode )
 - **Settings** — offer a wide menu of fonts, sizes and weights
 
+
+### Zen mode
+
+No toolbars, no sidebars, just your thoughts. And if you prefer to work in notes across different notebooks side by side and return to your session day after day, you could work mainly in Zen mode. Another way Cento bridges Obsidian and OneNote.
+
+
 ### Columns
 
 One other thing Obsidian does not offer natively: comparing or composing content side by side within a single document. Again, in service of spatial organization, Cento lets you split any note into up to four columns. The columns are recorded in the `.md` file itself using a simple HTML comment delimiter (`
@@ -99,10 +105,13 @@ Each notebook stores its own session file (`.cento-notebook.json`) in its root f
 
 | Shortcut | Action |
 |---|---|
+| `Ctrl + Alt + P` | Toggle between editing and preview mode |
+| `Ctrl + Alt + Z` | Toggle between Zen mode and regular app view |
 | `Ctrl + S` | Save |
 | `Ctrl + K` | Wrap selection as hyperlink `[text]()` |
 | `Ctrl + B` | Bold |
 | `Ctrl + I` | Italic |
+| `Ctrl + Tab` |  In Zen mode, rotate thorugh tabs |
 
 ---
 

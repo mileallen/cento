@@ -322,7 +322,8 @@ body {
     opacity: 1;
 }
 
-#save-indicator {
+#save-indicator,
+#zen-save-indicator {
     font-size: 11px;
     color: var(--text-dim);
     margin-right: 4px;
@@ -330,11 +331,13 @@ body {
     text-align: right;
 }
 
-#save-indicator.saving {
+#save-indicator.saving,
+#zen-save-indicator.saving {
     color: var(--yellow);
 }
 
-#save-indicator.saved {
+#save-indicator.saved,
+#zen-save-indicator.saved {
     color: var(--green);
 }
 
@@ -1961,4 +1964,51 @@ notebook-entry {
 }
 .preview-content h6 {
     font-size: 0.90em;
+}
+/* ─────────────────────────────────────────────────────────────────────────
+   Zen mode — App.toggleZen() toggles body.zen-mode; everything else is here.
+   The chrome is hidden (not removed), so nothing is rebuilt on entry or exit.
+   !important: _applyWidths() writes inline display values on some of these.
+   ───────────────────────────────────────────────────────────────────────── */
+#zen-hot,
+#zen-bar { display: none; }
+
+body.zen-mode #toolbar,
+body.zen-mode #sidebar,
+body.zen-mode #page-list-panel,
+body.zen-mode #right-sidebar,
+body.zen-mode .sidebar-resize-handle,
+body.zen-mode #section-tabs-el,
+body.zen-mode #subsection-tabs-el { display: none !important; }
+
+/* Invisible strip along the top edge: hovering it slides the bar down. */
+body.zen-mode #zen-hot {
+    display: block;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: 10px;
+    z-index: 50;
+}
+
+/* The bar overlays the editor (no layout shift) and rests just above the viewport. */
+body.zen-mode #zen-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: var(--tab-h);
+    padding: 0 8px 0 12px;
+    background: var(--bg-tab);
+    border-bottom: 1px solid var(--border);
+    z-index: 60;
+    transform: translateY(-100%);
+    transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+body.zen-mode #zen-hot:hover + #zen-bar,
+body.zen-mode #zen-bar:hover,
+body.zen-mode #zen-bar:focus-within {
+    transform: none;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
 }
