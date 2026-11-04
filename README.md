@@ -65,7 +65,7 @@ Notebook folder/         ← a folder you open as a notebook
 
 ### Zen mode
 
-No toolbars, no sidebars, just your thoughts. And if you prefer to work in notes across different notebooks side by side and return to your session day after day, you could work mainly in Zen mode. Another way Cento bridges Obsidian and OneNote.
+No toolbars, no sidebars, just your thoughts. You can 'pin' notes to Zen mode. And if you prefer to work in notes across different notebooks side by side and return to your session day after day, you could work mainly in Zen mode. Another way Cento bridges Obsidian and OneNote. 
 
 
 ### Columns
@@ -81,7 +81,7 @@ To add a column: click the `+` column button in the toolbar (splits at the curso
 ### Navigation
 
 - **Back / Forward** buttons in the toolbar for in-session navigation history
-- `[[Wikilinks]]` navigate between pages in the active notebook
+- `[[Wikilinks]]` navigate between pages in the active notebook. Type `[[` and the first letter of a title to autocomplete the link.
 - **Cento links** — right-click in the editor to copy a `web+cento://` deep link to the current page. Clicking the link from any other app focuses Cento and opens that page directly.
 - As in the screenshot above, links are color coded by type. Outgoing web links are blue. Wikilinks are green. Zotero citation links are styled in Zotero's brand colour[^*] (For security, Obsidian is only other app for which protocol links are treated as links that launch the app.)
 
