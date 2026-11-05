@@ -38,7 +38,7 @@ Notebook folder/         ← a folder you open as a notebook
   Loose note.md          ← appears in a virtual "Unfiled" section
 ```
 
-- **Notebooks** — any folder on your drive.  (As a browser-based app, it will ask for permission to access the folder). Multiple notebooks can be open simultaneously; they appear in the left sidebar and are seamlessly restored on next launch (no re-picking required).
+- **Notebooks** — a top level folder. (As a browser-based app, for security, it will ask for permission to access the folder). Multiple notebooks can be open simultaneously; they appear in the left sidebar.
 - **Sections** — top-level subfolders, shown as horizontal tabs across the top of the editor. Click the `+` button at the right edge of the tab strip to add a new section.
 - **Sub-sections** — subfolders of a section, shown as a second row of tabs beneath the section tabs once a section has at least one. The section's own pages sit under a **Pages** tab at the start of that row. Click the `+` at the end of the row to add a sub-section, or right-click a section tab and choose **Add Sub-Section** (the way to create a section's first one).
 - **Pages** — `.md` files, listed in the right-hand panel. A section with no sub-sections lists its own pages directly. A sub-section lists every `.md` file anywhere inside its folder as one flat, alphabetical list. Hierarchy stops at sub-sections: folders nested deeper don't create further levels, but the notes inside them still appear, so a notebook organised elsewhere never loses a note.
@@ -97,7 +97,7 @@ When Cento is installed as a PWA, it registers as a handler for `.md` files on W
 
 ### Session
 
-Each notebook stores its own session file (`.cento-notebook.json`) in its root folder, tracking the last-active section, last-active page per section, scroll and cursor positions, sidebar widths, and outline visibility. Everything is restored exactly where you left off on next launch. (Previously open notebooks are listed in the sidebar, but may require you to reauthorize access when you click them once.)
+Each notebook stores its own session file (`.cento-notebook.json`) in its root folder, tracking the last-active section, last-active page per section, scroll and cursor positions, sidebar widths, and outline visibility. Everything is restored exactly where you left off on next launch. (Previously open notebooks are listed in the sidebar. In the browser, they are restored seamlessly on relaunch. In the PWA version, they may require you to reauthorize access when you click them once.)
 
 ---
 
@@ -106,12 +106,12 @@ Each notebook stores its own session file (`.cento-notebook.json`) in its root f
 | Shortcut | Action |
 |---|---|
 | `Ctrl + Alt + P` | Toggle between editing and preview mode |
-| `Ctrl + Alt + Z` | Toggle between Zen mode and regular app view |
+| `Ctrl + Alt + Z` | Toggle between Zen mode and the full interface |
 | `Ctrl + S` | Save |
 | `Ctrl + K` | Wrap selection as hyperlink `[text]()` |
 | `Ctrl + B` | Bold |
 | `Ctrl + I` | Italic |
-| `Ctrl + Tab` |  In Zen mode (as PWA), cycle thorugh tabs |
+| `Ctrl + Tab` |  In Zen mode (PWA version), cycle thorugh tabs |
 
 ---
 
