@@ -613,8 +613,10 @@ class CentoEditor extends HTMLElement {
         if (this._editorMode === 'preview') {
             this._previewPane?.remove();
             this._previewPane = null;
+            // Saved positions are editor pixels; read them against the fresh editor while it is still visible
+            const lines = this._cms.map( (cm, i) => this._cmLine(cm, columnsData[i]?.scrollTop || 0));
             this._pane.style.display = 'none';
-            this._buildPreviewPane();
+            this._buildPreviewPane(lines);
         }
     }
 
@@ -720,6 +722,7 @@ class CentoEditor extends HTMLElement {
 
         // Push merged content into the now-last CM
         prevCm.setValue(merged);
+        prevCm.clearHistory();   // a column merge can't be undone with Ctrl+Z
 
         this._focusedColIdx = Math.min(this._focusedColIdx, this._cms.length - 1);
         requestAnimationFrame( () => {
@@ -838,6 +841,7 @@ class CentoEditor extends HTMLElement {
             line: 0,
             ch: 0
         });
+        cm.clearHistory();   // loading the note isn't a user edit, so Ctrl+Z must not be able to undo it
         cm.setSize('100%', '100%');
 
         if (this._editorMode === 'live')
@@ -976,23 +980,103 @@ class CentoEditor extends HTMLElement {
             this._wikiEl.style.display = 'none';
     }
 
+    // ── Scroll position across Live Preview / Preview ────────────────────────────
+    // The editor and the rendered preview have different heights, so pixel offsets don't transfer. Source
+    // line numbers do: the renderer tags each top-level block with the line it starts on (data-line) and
+    // CodeMirror knows where every line is. So a position is carried as a fractional source line, per
+    // column, in both directions. The reference point is the top edge of the viewport at the top of the
+    // note and slides to the bottom edge at the bottom, so the two ends always line up. The padding above
+    // the first line (or block) counts as one extra line, -1 to 0, so a note that hasn't been scrolled
+    // maps to a preview that hasn't been scrolled, to the pixel.
+
+    /** Fractional source line at document pixel `y` of an editor column (-1 to 0 in the padding above line 0). */
+    _lineAt(cm, y) {
+        const first = cm.heightAtLine(0, 'local');
+        if (y < first)
+            return y / first - 1;
+        const n = cm.lineAtHeight(y, 'local'), top = cm.heightAtLine(n, 'local'), next = cm.heightAtLine(n + 1, 'local');
+        return n + (next > top ? Math.min(1, Math.max(0, (y - top) / (next - top))) : 0);
+    }
+
+    /** Document pixel of a fractional source line of an editor column. */
+    _pixelOf(cm, line) {
+        if (line < 0)
+            return Math.max(0, 1 + line) * cm.heightAtLine(0, 'local');
+        const n = Math.floor(line), top = cm.heightAtLine(n, 'local');
+        return top + (line - n) * (cm.heightAtLine(n + 1, 'local') - top);
+    }
+
+    /** The line at an editor column's reference point. Must be visible; `top` overrides its scroll position.
+     *  The note's height is where its last line ends, not the scroller's height, which includes padding below. */
+    _cmLine(cm, top) {
+        const info = cm.getScrollInfo(), max = info.height - info.clientHeight;
+        return max > 0 ? this._lineAt(cm, (top ?? info.top) * this._pixelOf(cm, cm.lineCount()) / max) : -1;   // fits in view: the top
+    }
+
+    _scrollToLine(cm, line) {
+        const info = cm.getScrollInfo(), max = info.height - info.clientHeight;
+        if (max > 0)
+            cm.scrollTo(null, this._pixelOf(cm, line) * max / this._pixelOf(cm, cm.lineCount()));
+    }
+
+    /** Two neighbouring [line, y] points of a preview column around `at` (on axis 0 = line, 1 = y): the last
+     *  tagged block at or before it (or the padding above the first, [-1, 0]), and the next block (or the
+     *  note's end). By bisection, so a long note doesn't mean measuring every block. */
+    _around(col, nLines, axis, at) {
+        const els = col.querySelectorAll('[data-line]');
+        const origin = col.getBoundingClientRect().top - col.scrollTop;
+        const mark = el => [+el.dataset.line, el.getBoundingClientRect().top - origin];
+        let lo = 0, hi = els.length - 1, k = -1;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (mark(els[mid])[axis] <= at) { k = mid; lo = mid + 1; } else hi = mid - 1;
+        }
+        return [k >= 0 ? mark(els[k]) : [-1, 0], k + 1 < els.length ? mark(els[k + 1]) : [nLines, col.scrollHeight]];
+    }
+
+    /** The line at a preview column's reference point. Must be visible. */
+    _previewLine(col, nLines) {
+        const max = col.scrollHeight - col.clientHeight;
+        if (max <= 0)
+            return -1;
+        const ref = col.scrollTop * col.scrollHeight / max;
+        const [a, b] = this._around(col, nLines, 1, ref);
+        return a[0] + Math.min(1, Math.max(0, (ref - a[1]) / (b[1] - a[1] || 1))) * (b[0] - a[0]);
+    }
+
+    /** The scrollTop that puts a fractional source line at a preview column's reference point. */
+    _previewScroll(col, line, nLines) {
+        const [a, b] = this._around(col, nLines, 0, line);
+        const y = a[1] + Math.min(1, Math.max(0, (line - a[0]) / (b[0] - a[0] || 1))) * (b[1] - a[1]);
+        return y * (col.scrollHeight - col.clientHeight) / (col.scrollHeight || 1);
+    }
+
     /** Switch between live-edit and rendered-preview modes */
     _applyEditorMode() {
         if (this._editorMode === 'preview') {
+            const lines = this._cms.map(cm => this._cmLine(cm));   // measure before hiding: a hidden pane has no height
             // Hide (don't destroy) the editor pane so switching back is instant
             if (this._pane)
                 this._pane.style.display = 'none';
-            this._buildPreviewPane();
+            this._buildPreviewPane(lines);
         } else {
             // Remove preview, restore editor
+            const lines = this._previewPane   // likewise, before removing it
+                ? [...this._previewPane.querySelectorAll('.preview-col-pane')].map( (col, i) => this._previewLine(col, this._cms[i].lineCount())) : [];
             this._previewPane?.remove();
             this._previewPane = null;
             if (this._pane)
                 this._pane.style.display = '';
             requestAnimationFrame( () => {
-                this._cms.forEach(cm => {
+                this._cms.forEach( (cm, i) => {
                     cm.refresh();
                     rebuildDecorations(cm);
+                    if (lines[i] != null) {   // else keep the editor's own position
+                        this._scrollToLine(cm, lines[i]);
+                        // CodeMirror only measures the lines it displays; the first scroll has now shown some,
+                        // so the target's pixel position is better known. Settle on it.
+                        requestAnimationFrame( () => this._scrollToLine(cm, lines[i]));
+                    }
                 }
                 );
                 this.focusActive();
@@ -1002,7 +1086,7 @@ class CentoEditor extends HTMLElement {
     }
 
     /** Build a multi-column preview pane that mirrors the live layout */
-    _buildPreviewPane() {
+    _buildPreviewPane(lines = []) {
         const preview = document.createElement('div');
         preview.className = 'preview-only-pane active';
         this.appendChild(preview);
@@ -1018,7 +1102,7 @@ class CentoEditor extends HTMLElement {
             const col = document.createElement('div');
             col.className = 'preview-col-pane';
             // renderMarkdown is a global function defined in markdown.js
-            col.innerHTML = `<div class="preview-content">${renderMarkdown(cm.getValue(), { footnotes })}</div>`;
+            col.innerHTML = `<div class="preview-content">${renderMarkdown(cm.getValue(), { footnotes, sourceLines: true })}</div>`;
             preview.appendChild(col);
             lastContent = col.firstElementChild;
         }
@@ -1058,6 +1142,12 @@ class CentoEditor extends HTMLElement {
         );
 
         this._previewPane = preview;
+
+        // Start where the editor was, not at the top
+        requestAnimationFrame( () => preview.querySelectorAll('.preview-col-pane').forEach( (col, i) => {
+            col.scrollTop = lines[i] != null ? this._previewScroll(col, lines[i], this._cms[i].lineCount()) : 0;
+        }
+        ));
     }
 
     /** When the user types <!column> and presses Enter, split at that line */
@@ -1097,6 +1187,7 @@ class CentoEditor extends HTMLElement {
         }, (_, i) => cm.getLine(cursorLine + 1 + i)).join('\n');
 
         cm.setValue(above);
+        cm.clearHistory();       // a column split can't be undone with Ctrl+Z
         // update current CM in place
 
         // Insert divider + new col-pane immediately after the current col-pane

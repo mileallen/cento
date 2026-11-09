@@ -360,6 +360,8 @@ function mdRenderList(items, fn) {
  * options.streaming: the text is still arriving, so an unclosed $$ block is shown
  * as a placeholder instead of being treated as plain text.
  */
+/* CENTO: options.sourceLines tags every top-level block with the source line it starts on (data-line="N"),
+ * so the preview can be lined up with the editor. Off by default; only the preview pane asks for it. */
 function renderMarkdown(src, options) {
     const streaming = Boolean(options && options.streaming);
     // Footnotes: use the caller's shared state (columns) or make our own and list it at the end.
@@ -368,9 +370,11 @@ function renderMarkdown(src, options) {
     if (ownNotes) options = Object.assign({}, options, { footnotes: fn });
     const lines = String(src).replace(/[\u0000-\u0003]/g, "").replace(/\r\n?/g, "\n").split("\n");
     const out = [];
+    const starts = [];   // starts[k]: the source line out[k] begins on
     let i = 0;
 
     while (i < lines.length) {
+        starts[out.length] = i;
         const line = lines[i];
 
         // CENTO: each blank source line = one blank line-height of space (see .md-blank in looks.css)
@@ -446,7 +450,7 @@ function renderMarkdown(src, options) {
                 buf.push(lines[i].replace(/^\s*>\s?/, ""));
                 i++;
             }
-            out.push("<blockquote>" + renderMarkdown(buf.join("\n"), options) + "</blockquote>");
+            out.push("<blockquote>" + renderMarkdown(buf.join("\n"), Object.assign({}, options, { sourceLines: false })) + "</blockquote>");   // its lines are numbered from 0 again, so no tags inside
             continue;
         }
 
@@ -510,7 +514,8 @@ function renderMarkdown(src, options) {
         }
         out.push("<p>" + mdInline(buf.join("\n"), fn).replace(/\n/g, "<br>") + "</p>");
     }
-    return out.join("\n") + (ownNotes ? mdFootnoteList(fn) : "");
+    const tag = (html, k) => (starts[k] === undefined ? html : html.replace(/^<(\w+)/, '<$1 data-line="' + starts[k] + '"'));
+    return (options && options.sourceLines ? out.map(tag) : out).join("\n") + (ownNotes ? mdFootnoteList(fn) : "");
 }
 
 if (typeof module !== "undefined") module.exports = { renderMarkdown, escapeHtml, mdNewFootnotes, mdFootnoteList, extractWikilinks, rewriteWikilinks };
