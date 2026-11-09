@@ -809,6 +809,7 @@ class CentoEditor extends HTMLElement {
             autofocus: colIndex === 0,
             styleActiveLine: true,
             extraKeys: {
+                'Ctrl-S': () => this._dispatch('save-request'),
                 // Ctrl+K — wrap selection as a markdown link
                 'Ctrl-K': () => {
                     const sel = cm.getSelection();
@@ -820,8 +821,17 @@ class CentoEditor extends HTMLElement {
                         line: cur.line,
                         ch: cur.ch - 1
                     });
-                }
-                ,
+                },
+                // Ctrl+B — wrap selection as bold
+                'Ctrl-B': () => {
+                    const sel = cm.getSelection();
+                    if (sel) cm.replaceSelection(`**${sel}**`);
+                },
+                // Ctrl+B — wrap selection as bold
+                'Ctrl-I': () => {
+                    const sel = cm.getSelection();
+                    if (sel) cm.replaceSelection(`*${sel}*`);
+                },
                 // Enter — detect if the current line is the <!column> delimiter
                 'Enter': () => {
                     const lineText = cm.getLine(cm.getCursor().line) || '';
@@ -831,8 +841,7 @@ class CentoEditor extends HTMLElement {
                         return CodeMirror.Pass;
                         // normal Enter behaviour
                     }
-                }
-                ,
+                },
             },
         });
 
